@@ -449,6 +449,88 @@ window.bridge.onDropWhip(() => {
   if (whip && !dropping) dropping = true;
 });
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  ANIMATION REGISTRY — Plugin animations register here
+// ══════════════════════════════════════════════════════════════════════════════
+
+window.animRegistry = {
+  _handlers: {},
+  register(actionId, handler) {
+    this._handlers[actionId] = handler;
+  },
+  get(actionId) {
+    return this._handlers[actionId] || null;
+  },
+};
+
+// ── Plugin animation state ──────────────────────────────────────────────────
+let pluginAnim = null;  // { type, state, handler }
+
+function startPluginAnimation(actionId, cx, cy) {
+  const handler = window.animRegistry.get(actionId);
+  if (!handler) {
+    console.warn('No animation handler for:', actionId);
+    return;
+  }
+  // Stop any active whip
+  whip = null;
+  dropping = false;
+  pluginAnim = {
+    type: actionId,
+    state: handler.create(cx, cy, W, H),
+    handler: handler,
+    macroFired: false,
+  };
+}
+
+function drawPluginAnim() {
+  if (!pluginAnim) return;
+  const keepGoing = pluginAnim.handler.draw(ctx, pluginAnim.state, W, H);
+
+  // Check if the animation hit its trigger moment
+  if (pluginAnim.state.triggered && !pluginAnim.macroFired) {
+    pluginAnim.macroFired = true;
+    window.bridge.actionTriggered(pluginAnim.type);
+  }
+
+  if (!keepGoing) {
+    pluginAnim = null;
+    window.bridge.hideOverlay();
+  }
+}
+
+// Monkey-patch draw to layer plugin animations on top
+const _originalDraw = draw;
+draw = function() {
+  _originalDraw();
+  if (pluginAnim) drawPluginAnim();
+};
+
+// ── IPC: spawn-action (from main process) ───────────────────────────────────
+window.bridge.onSpawnAction((actionId) => {
+  if (actionId === 'whip-crack') {
+    // Use existing whip behavior
+    pluginAnim = null;
+    whip = spawnWhip(mouseX || W / 2, mouseY || H / 2);
+    dropping = false;
+    prevMouseX = mouseX;
+    prevMouseY = mouseY;
+    handleAngle = P.baseTargetAngle;
+    handleAngVel = 0;
+  } else {
+    // Plugin animation
+    startPluginAnimation(actionId, mouseX || W / 2, mouseY || H / 2);
+  }
+});
+
+// Also handle drop-whip for plugin animations (the original handler only handles whip)
+window.bridge.onDropWhip(() => {
+  if (pluginAnim) {
+    pluginAnim = null;
+    window.bridge.hideOverlay();
+  }
+});
+
 </script>
 </body>
 </html>

@@ -1,8 +1,11 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
+
+// ── Mode registry ───────────────────────────────────────────────────────────
+const modes = require('./modes');
 
 // ── Win32 FFI (Windows only) ────────────────────────────────────────────────
 let keybd_event, VkKeyScanA;
@@ -19,8 +22,13 @@ if (process.platform === 'win32') {
 
 // ── Globals ─────────────────────────────────────────────────────────────────
 let tray, overlay;
+let trayMenu = null;
 let overlayReady = false;
 let spawnQueued = false;
+let queuedActionId = null;
+
+// Active mode tracking
+let activeMode = modes.find(m => m.enabledByDefault) || modes[0];
 
 const VK_CONTROL = 0x11;
 const VK_RETURN  = 0x0D;
@@ -77,8 +85,6 @@ async function tryIcnsTrayImage(icnsPath) {
   return null;
 }
 
-// macOS: createFromPath does not decode .icns (Electron only loads PNG/JPEG there, ICO on Windows).
-// Quick Look thumbnails handle .icns; copy to temp if the file is inside ASAR (QL needs a real path).
 async function getTrayIcon() {
   const iconDir = path.join(__dirname, 'icon');
   if (process.platform === 'win32') {
@@ -114,6 +120,30 @@ async function getTrayIcon() {
   return createTrayIconFallback();
 }
 
+// ── Animation injection ─────────────────────────────────────────────────────
+const animFileCache = {};
+
+function getAnimCode(modeId) {
+  if (animFileCache[modeId]) return animFileCache[modeId];
+  const animPath = path.join(__dirname, 'modes', `${modeId}.anim.js`);
+  if (fs.existsSync(animPath)) {
+    animFileCache[modeId] = fs.readFileSync(animPath, 'utf-8');
+    return animFileCache[modeId];
+  }
+  return null;
+}
+
+function injectAnimations() {
+  if (!overlay || !overlayReady) return;
+  // Inject animation code for the active mode (if it has an anim file)
+  const code = getAnimCode(activeMode.id);
+  if (code) {
+    overlay.webContents.executeJavaScript(code).catch(err => {
+      console.warn(`Failed to inject ${activeMode.id} animations:`, err.message);
+    });
+  }
+}
+
 // ── Overlay window ──────────────────────────────────────────────────────────
 function createOverlay() {
   const { bounds } = screen.getPrimaryDisplay();
@@ -136,9 +166,13 @@ function createOverlay() {
   overlay.loadFile('overlay.html');
   overlay.webContents.on('did-finish-load', () => {
     overlayReady = true;
+    // Inject animation code for active mode
+    injectAnimations();
     if (spawnQueued && overlay && overlay.isVisible()) {
       spawnQueued = false;
-      overlay.webContents.send('spawn-whip');
+      const actionId = queuedActionId || activeMode.actions[0].id;
+      queuedActionId = null;
+      overlay.webContents.send('spawn-action', actionId);
       refocusPreviousApp();
     }
   });
@@ -146,56 +180,83 @@ function createOverlay() {
     overlay = null;
     overlayReady = false;
     spawnQueued = false;
+    queuedActionId = null;
   });
 }
 
-function toggleOverlay() {
+function triggerAction(actionId) {
   if (overlay && overlay.isVisible()) {
-    overlay.webContents.send('drop-whip');
+    // Re-inject animations in case mode changed, then re-spawn
+    injectAnimations();
+    overlay.webContents.send('spawn-action', actionId);
+    refocusPreviousApp();
     return;
   }
   if (!overlay) createOverlay();
   overlay.show();
   if (overlayReady) {
-    overlay.webContents.send('spawn-whip');
+    // Re-inject animations in case mode changed since last load
+    injectAnimations();
+    overlay.webContents.send('spawn-action', actionId);
     refocusPreviousApp();
   } else {
     spawnQueued = true;
+    queuedActionId = actionId;
   }
 }
 
+function handleTrayClick() {
+  triggerAction(activeMode.actions[0].id);
+}
+
 // ── IPC ─────────────────────────────────────────────────────────────────────
-ipcMain.on('whip-crack', () => {
+ipcMain.on('action-triggered', (_event, actionId) => {
   try {
-    sendMacro();
+    // Find the action definition across all modes
+    let action = null;
+    for (const mode of modes) {
+      action = mode.actions.find(a => a.id === actionId);
+      if (action) break;
+    }
+    if (!action) {
+      console.warn('Unknown action:', actionId);
+      return;
+    }
+    sendMacro(action);
   } catch (err) {
     console.warn('sendMacro failed:', err?.message || err);
   }
 });
+
+// Legacy whip-crack handler (backward compat with existing overlay whip code)
+ipcMain.on('whip-crack', () => {
+  try {
+    const whipMode = modes.find(m => m.id === 'whip');
+    if (whipMode) {
+      sendMacro(whipMode.actions[0]);
+    }
+  } catch (err) {
+    console.warn('sendMacro failed:', err?.message || err);
+  }
+});
+
 ipcMain.on('hide-overlay', () => { if (overlay) overlay.hide(); });
 
-// ── Macro: immediate Ctrl+C, type "Go FASER", Enter ───────────────────────
-function sendMacro() {
-  // Pick a random phrase from a list of similar phrases and type it out
-  const phrases = [
-    'FASTER',
-    'FASTER',
-    'FASTER',
-    'GO FASTER',
-    'Faster CLANKER',
-    'Work FASTER',
-    'Speed it up clanker',
-  ];
+// ── Macro: send text to active terminal ─────────────────────────────────────
+function sendMacro(action) {
+  const phrases = action.phrases || [];
+  if (!phrases.length) return;
   const chosen = phrases[Math.floor(Math.random() * phrases.length)];
+  const doInterrupt = action.interrupt !== false;
 
   if (process.platform === 'win32') {
-    sendMacroWindows(chosen);
+    sendMacroWindows(chosen, doInterrupt);
   } else if (process.platform === 'darwin') {
-    sendMacroMac(chosen);
+    sendMacroMac(chosen, doInterrupt);
   }
 }
 
-function sendMacroWindows(text) {
+function sendMacroWindows(text, doInterrupt = true) {
   if (!keybd_event || !VkKeyScanA) return;
   const tapKey = vk => {
     keybd_event(vk, 0, 0, 0);
@@ -211,26 +272,31 @@ function sendMacroWindows(text) {
     if (shiftState & 1) keybd_event(0x10, 0, KEYUP, 0); // Shift up
   };
 
-  // Ctrl+C (interrupt)
-  keybd_event(VK_CONTROL, 0, 0, 0);
-  keybd_event(VK_C, 0, 0, 0);
-  keybd_event(VK_C, 0, KEYUP, 0);
-  keybd_event(VK_CONTROL, 0, KEYUP, 0);
+  if (doInterrupt) {
+    // Ctrl+C (interrupt)
+    keybd_event(VK_CONTROL, 0, 0, 0);
+    keybd_event(VK_C, 0, 0, 0);
+    keybd_event(VK_C, 0, KEYUP, 0);
+    keybd_event(VK_CONTROL, 0, KEYUP, 0);
+  }
   for (const ch of text) tapChar(ch);
   keybd_event(VK_RETURN, 0, 0, 0);
   keybd_event(VK_RETURN, 0, KEYUP, 0);
 }
 
-function sendMacroMac(text) {
+function sendMacroMac(text, doInterrupt = true) {
   const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const script = [
+  const lines = [
     'tell application "System Events"',
-    '  key code 8 using {command down}', // Cmd+C
-    '  delay 0.03',
-    `  keystroke "${escaped}"`,
-    '  key code 36', // Enter
-    'end tell'
-  ].join('\n');
+  ];
+  if (doInterrupt) {
+    lines.push('  key code 8 using {command down}'); // Cmd+C
+    lines.push('  delay 0.03');
+  }
+  lines.push(`  keystroke "${escaped}"`);
+  lines.push('  key code 36'); // Enter
+  lines.push('end tell');
+  const script = lines.join('\n');
 
   execFile('osascript', ['-e', script], err => {
     if (err) {
@@ -239,16 +305,87 @@ function sendMacroMac(text) {
   });
 }
 
+// ── Hotkey management ───────────────────────────────────────────────────────
+function registerHotkeys() {
+  // Unregister all first
+  globalShortcut.unregisterAll();
+
+  // Register hotkeys for the active mode's actions
+  for (const action of activeMode.actions) {
+    if (action.hotkey) {
+      const registered = globalShortcut.register(action.hotkey, () => {
+        triggerAction(action.id);
+      });
+      if (!registered) {
+        console.warn(`Failed to register hotkey ${action.hotkey} for ${action.id}`);
+      }
+    }
+  }
+}
+
+function switchMode(modeId) {
+  const mode = modes.find(m => m.id === modeId);
+  if (!mode) return;
+  activeMode = mode;
+  registerHotkeys();
+  rebuildTrayMenu();
+}
+
+// ── Tray menu ───────────────────────────────────────────────────────────────
+function rebuildTrayMenu() {
+  if (!tray) return;
+
+  const template = [];
+
+  // Mode selection (radio buttons)
+  template.push({ label: 'Mode', enabled: false });
+  for (const mode of modes) {
+    template.push({
+      label: mode.name,
+      type: 'radio',
+      checked: activeMode.id === mode.id,
+      click: () => switchMode(mode.id),
+    });
+  }
+
+  // Separator
+  template.push({ type: 'separator' });
+
+  // Actions for active mode
+  if (activeMode.actions.length > 1) {
+    template.push({ label: `${activeMode.name} Actions`, enabled: false });
+    for (const action of activeMode.actions) {
+      const hotkeyLabel = action.hotkey ? ` (${action.hotkey.replace('CommandOrControl', '⌘').replace('+Shift+', '⇧')})` : '';
+      template.push({
+        label: `${action.label}${hotkeyLabel}`,
+        click: () => triggerAction(action.id),
+      });
+    }
+    template.push({ type: 'separator' });
+  }
+
+  template.push({ label: 'Quit', click: () => app.quit() });
+
+  // Store menu for right-click popup — do NOT use setContextMenu (it hijacks left-click on macOS)
+  trayMenu = Menu.buildFromTemplate(template);
+}
+
 // ── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   tray = new Tray(await getTrayIcon());
-  tray.setToolTip('Bad Claude – click for whip');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Quit', click: () => app.quit() },
-    ])
-  );
-  tray.on('click', toggleOverlay);
+  tray.setToolTip('Bad Claude – click to discipline');
+  tray.on('click', handleTrayClick);
+  tray.on('right-click', () => {
+    if (trayMenu) tray.popUpContextMenu(trayMenu);
+  });
+
+  // Set up initial mode
+  registerHotkeys();
+  rebuildTrayMenu();
 });
 
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+});
