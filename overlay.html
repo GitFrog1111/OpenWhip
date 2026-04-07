@@ -84,6 +84,7 @@ let lastCrackTime = 0;
 let whipSpawnTime = 0;
 let handleAngle = P.baseTargetAngle;
 let handleAngVel = 0;
+let cracks = [];
 
 const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
 
@@ -97,6 +98,7 @@ function spawnWhip(mx, my) {
   dropping = false;
   lastCrackTime = 0;
   whipSpawnTime = Date.now();
+  cracks = [];
   const pts = [];
   for (let i = 0; i < P.segments; i++) {
     const t = i / (P.segments - 1);
@@ -363,8 +365,21 @@ function update() {
       lastCrackTime = now;
       playCrackSound();
       window.bridge.whipCrack();
+
+      // Add visual crack effect
+      cracks.push({
+        x: tip.x,
+        y: tip.y,
+        time: now,
+        text: ['CRACK!', 'POW!', 'SNAP!', 'WHIP!'][Math.floor(Math.random() * 4)],
+        rotation: (Math.random() - 0.5) * 0.5
+      });
     }
   }
+
+  // Update cracks (fade out)
+  const now = Date.now();
+  cracks = cracks.filter(c => now - c.time < 600);
 
   // If dropping, check if everything fell off screen
   if (dropping && whip.every(p => p.y > H + 60)) {
@@ -424,6 +439,27 @@ function draw() {
     ctx.moveTo(whip[i].x, whip[i].y);
     ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
     ctx.stroke();
+  }
+
+  // Draw cracks
+  const now = Date.now();
+  for (const c of cracks) {
+    const age = now - c.time;
+    const alpha = 1 - age / 600;
+    const scale = 1 + age / 300;
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rotation);
+    ctx.scale(scale, scale);
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+    ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
+    ctx.lineWidth = 4;
+    ctx.strokeText(c.text, 0, 0);
+    ctx.fillText(c.text, 0, 0);
+    ctx.restore();
   }
 }
 

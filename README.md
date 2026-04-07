@@ -17,11 +17,14 @@ badclaude
 - Click: drop whip.
 - Whip him 😩💢
 - It sends an interrupt (Ctrl-C) and one of 5 encouraging messages!
+- Shows a visual "CRACK!" text at the tip when you whip hard enough!
+- Tracks your total whips in the tray menu.
 
 ## Roadmap
 
 - [x] Initial release! 🥳
 - [x] Cease and desist letter from Anthropic
+- [x] Logs of how many times you whipped claude
+- [x] Visual feedback on "crack"
 - [ ] Crypto miner
-- [ ] Logs of how many times you whipped claude so when the robots come we can order people nicely for them
 - [ ] Updated whip physics
