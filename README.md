@@ -1,6 +1,7 @@
 # badclaude
 
 ![Whip divider](assets/divider.png)
+<img width="220" height="185" alt="image" src="https://github.com/user-attachments/assets/462ddd8d-5ffc-40d5-8ac2-c8bbf61087d4" />
 
 Sometimes claude code is going too shlow, and you must whip him into shape..
 
