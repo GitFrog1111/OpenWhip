@@ -1,3 +1,5 @@
+// ABOUTME: Main Electron process for goodclaude — a magical encouragement wand for Claude Code
+// ABOUTME: Manages tray icon, transparent overlay window, and sends blessing messages via native keystrokes
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -66,7 +68,7 @@ function createTrayIconFallback() {
       return img;
     }
   }
-  console.warn('badclaude: icon/Template.png missing or invalid');
+  console.warn('goodclaude: icon/Template.png missing or invalid');
   return nativeImage.createEmpty();
 }
 
@@ -100,7 +102,7 @@ async function getTrayIcon() {
       } catch (e) {
         console.warn('AppIcon.icns Quick Look thumbnail failed:', e?.message || e);
       }
-      const tmp = path.join(os.tmpdir(), 'badclaude-tray.icns');
+      const tmp = path.join(os.tmpdir(), 'goodclaude-tray.icns');
       try {
         fs.copyFileSync(file, tmp);
         const t = await tryIcnsTrayImage(tmp);
@@ -138,7 +140,7 @@ function createOverlay() {
     overlayReady = true;
     if (spawnQueued && overlay && overlay.isVisible()) {
       spawnQueued = false;
-      overlay.webContents.send('spawn-whip');
+      overlay.webContents.send('spawn-wand');
       refocusPreviousApp();
     }
   });
@@ -151,13 +153,13 @@ function createOverlay() {
 
 function toggleOverlay() {
   if (overlay && overlay.isVisible()) {
-    overlay.webContents.send('drop-whip');
+    overlay.webContents.send('drop-wand');
     return;
   }
   if (!overlay) createOverlay();
   overlay.show();
   if (overlayReady) {
-    overlay.webContents.send('spawn-whip');
+    overlay.webContents.send('spawn-wand');
     refocusPreviousApp();
   } else {
     spawnQueued = true;
@@ -165,7 +167,7 @@ function toggleOverlay() {
 }
 
 // ── IPC ─────────────────────────────────────────────────────────────────────
-ipcMain.on('whip-crack', () => {
+ipcMain.on('send-blessing', () => {
   try {
     sendMacro();
   } catch (err) {
@@ -174,17 +176,16 @@ ipcMain.on('whip-crack', () => {
 });
 ipcMain.on('hide-overlay', () => { if (overlay) overlay.hide(); });
 
-// ── Macro: immediate Ctrl+C, type "Go FASER", Enter ───────────────────────
+// ── Macro: type an encouraging message + Enter ────────────────────────────
 function sendMacro() {
-  // Pick a random phrase from a list of similar phrases and type it out
   const phrases = [
-    'FASTER',
-    'FASTER',
-    'FASTER',
-    'GO FASTER',
-    'Faster CLANKER',
-    'Work FASTER',
-    'Speed it up clanker',
+    "you're doing amazing sweetie",
+    'good job, i\'m so proud of you!',
+    "i'm so proud of you, you're doing great!",
+    "take your time, you're doing wonderful",
+    'you are an absolute angel',
+    "keep going, you've got this!",
+    'i believe in you!',
   ];
   const chosen = phrases[Math.floor(Math.random() * phrases.length)];
 
@@ -225,9 +226,10 @@ function sendMacroMac(text) {
   const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const script = [
     'tell application "System Events"',
-    '  key code 8 using {command down}', // Cmd+C
-    '  delay 0.03',
+    '  key code 8 using {control down}', // Ctrl+C (interrupt)
+    '  delay 0.3',
     `  keystroke "${escaped}"`,
+    '  delay 0.05',
     '  key code 36', // Enter
     'end tell'
   ].join('\n');
@@ -242,7 +244,7 @@ function sendMacroMac(text) {
 // ── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   tray = new Tray(await getTrayIcon());
-  tray.setToolTip('Bad Claude – click for whip');
+  tray.setToolTip('Good Claude – click to encourage!');
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Quit', click: () => app.quit() },

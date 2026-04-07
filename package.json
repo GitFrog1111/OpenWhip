@@ -1,11 +1,11 @@
 {
-  "name": "badclaude",
-  "version": "1.0.2",
-  "description": "Whip Claude into shape",
+  "name": "goodclaude",
+  "version": "1.0.0",
+  "description": "Encourage Claude with a magical sparkle ribbon wand",
   "license": "MIT",
   "main": "main.js",
   "bin": {
-    "badclaude": "bin/badclaude.js"
+    "goodclaude": "bin/goodclaude.js"
   },
   "os": [
     "darwin",
@@ -18,23 +18,17 @@
     "electron",
     "tray",
     "overlay",
-    "cli"
+    "cli",
+    "encouragement",
+    "claude"
   ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/GitFrog1111/badclaude.git"
-  },
-  "bugs": {
-    "url": "https://github.com/GitFrog1111/badclaude/issues"
-  },
-  "homepage": "https://github.com/GitFrog1111/badclaude#readme",
   "files": [
     "main.js",
     "preload.js",
     "overlay.html",
     "sounds",
     "icon",
-    "bin/badclaude.js",
+    "bin/goodclaude.js",
     "README.md"
   ],
   "scripts": {
