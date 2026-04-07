@@ -21,6 +21,7 @@ if (process.platform === 'win32') {
 let tray, overlay;
 let overlayReady = false;
 let spawnQueued = false;
+let whipCount = 0;
 
 const VK_CONTROL = 0x11;
 const VK_RETURN  = 0x0D;
@@ -28,6 +29,16 @@ const VK_C       = 0x43;
 const VK_MENU    = 0x12; // Alt
 const VK_TAB     = 0x09;
 const KEYUP      = 0x0002;
+
+function updateTrayMenu() {
+  if (!tray) return;
+  const contextMenu = Menu.buildFromTemplate([
+    { label: `Total Whips: ${whipCount}`, enabled: false },
+    { type: 'separator' },
+    { label: 'Quit', click: () => app.quit() },
+  ]);
+  tray.setContextMenu(contextMenu);
+}
 
 /** One Alt+Tab / Cmd+Tab so focus returns to the previously active app after tray click. */
 function refocusPreviousApp() {
@@ -166,6 +177,8 @@ function toggleOverlay() {
 
 // ── IPC ─────────────────────────────────────────────────────────────────────
 ipcMain.on('whip-crack', () => {
+  whipCount++;
+  updateTrayMenu();
   try {
     sendMacro();
   } catch (err) {
@@ -243,11 +256,7 @@ function sendMacroMac(text) {
 app.whenReady().then(async () => {
   tray = new Tray(await getTrayIcon());
   tray.setToolTip('Bad Claude – click for whip');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Quit', click: () => app.quit() },
-    ])
-  );
+  updateTrayMenu();
   tray.on('click', toggleOverlay);
 });
 
