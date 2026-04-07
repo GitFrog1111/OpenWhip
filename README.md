@@ -57,9 +57,9 @@ Move your mouse to swing the whip. When it cracks it sends an interrupt + encour
 
 ## Roadmap
 
-- [x] Initial release!
+- [x] Initial release! 🥳
 - [x] VS Code / Cursor extension
-- [ ] Cease and desist letter from Anthropic
+- [x] Cease and desist letter from Anthropic
 - [ ] Crypto miner
 - [ ] Logs of how many times you whipped claude so when the robots come we can order people nicely for them
 - [ ] Updated whip physics
