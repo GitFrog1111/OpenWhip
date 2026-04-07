@@ -1,0 +1,37 @@
+{
+  "name": "badclaude",
+  "displayName": "Bad Claude",
+  "description": "Whip Claude into shape — cracks a whip and sends encouraging messages to your terminal and chat",
+  "version": "1.0.2",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./src/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      {
+        "command": "badclaude.toggleWhip",
+        "title": "Bad Claude: Toggle Whip"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "badclaude.toggleWhip",
+        "key": "ctrl+shift+w",
+        "mac": "cmd+shift+w"
+      }
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GitFrog1111/badclaude.git"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0"
+  }
+}
