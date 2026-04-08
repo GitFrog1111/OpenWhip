@@ -1,11 +1,12 @@
 {
-  "name": "badclaude",
+  "name": "badclaude-and-codex",
+  "productName": "badclaude-and-codex",
   "version": "1.0.2",
-  "description": "Whip Claude into shape",
+  "description": "Whip Claude and Codex into shape",
   "license": "MIT",
   "main": "main.js",
   "bin": {
-    "badclaude": "bin/badclaude.js"
+    "badclaude-and-codex": "bin/badclaude-and-codex.js"
   },
   "os": [
     "darwin",
@@ -18,7 +19,9 @@
     "electron",
     "tray",
     "overlay",
-    "cli"
+    "cli",
+    "claude",
+    "codex"
   ],
   "repository": {
     "type": "git",
@@ -34,7 +37,7 @@
     "overlay.html",
     "sounds",
     "icon",
-    "bin/badclaude.js",
+    "bin/badclaude-and-codex.js",
     "README.md"
   ],
   "scripts": {
@@ -43,7 +46,7 @@
     "pack": "npm pack"
   },
   "dependencies": {
-    "electron": "^33.0.0",
+    "electron": "^41.1.1",
     "koffi": "^2.9.0"
   }
 }

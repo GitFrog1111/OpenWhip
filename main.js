@@ -4,6 +4,9 @@ const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
 
+const APP_SLUG = 'badclaude-and-codex';
+app.setName(APP_SLUG);
+
 // ── Win32 FFI (Windows only) ────────────────────────────────────────────────
 let keybd_event, VkKeyScanA;
 if (process.platform === 'win32') {
@@ -28,6 +31,16 @@ const VK_C       = 0x43;
 const VK_MENU    = 0x12; // Alt
 const VK_TAB     = 0x09;
 const KEYUP      = 0x0002;
+const CODEX_APP_BUNDLE_ID = 'com.openai.codex';
+const APPLE_TERMINAL_BUNDLE_ID = 'com.apple.Terminal';
+const KNOWN_TERMINAL_BUNDLE_IDS = new Set([
+  APPLE_TERMINAL_BUNDLE_ID,
+  'com.googlecode.iterm2',
+  'com.github.wez.wezterm',
+  'com.mitchellh.ghostty',
+  'dev.warp.Warp-Stable',
+  'co.zeit.hyper',
+]);
 
 /** One Alt+Tab / Cmd+Tab so focus returns to the previously active app after tray click. */
 function refocusPreviousApp() {
@@ -66,7 +79,7 @@ function createTrayIconFallback() {
       return img;
     }
   }
-  console.warn('badclaude: icon/Template.png missing or invalid');
+  console.warn(`${APP_SLUG}: icon/Template.png missing or invalid`);
   return nativeImage.createEmpty();
 }
 
@@ -100,7 +113,7 @@ async function getTrayIcon() {
       } catch (e) {
         console.warn('AppIcon.icns Quick Look thumbnail failed:', e?.message || e);
       }
-      const tmp = path.join(os.tmpdir(), 'badclaude-tray.icns');
+      const tmp = path.join(os.tmpdir(), `${APP_SLUG}-tray.icns`);
       try {
         fs.copyFileSync(file, tmp);
         const t = await tryIcnsTrayImage(tmp);
@@ -164,19 +177,7 @@ function toggleOverlay() {
   }
 }
 
-// ── IPC ─────────────────────────────────────────────────────────────────────
-ipcMain.on('whip-crack', () => {
-  try {
-    sendMacro();
-  } catch (err) {
-    console.warn('sendMacro failed:', err?.message || err);
-  }
-});
-ipcMain.on('hide-overlay', () => { if (overlay) overlay.hide(); });
-
-// ── Macro: immediate Ctrl+C, type "Go FASER", Enter ───────────────────────
-function sendMacro() {
-  // Pick a random phrase from a list of similar phrases and type it out
+function getRandomPhrase() {
   const phrases = [
     'FASTER',
     'FASTER',
@@ -186,7 +187,177 @@ function sendMacro() {
     'Work FASTER',
     'Speed it up clanker',
   ];
-  const chosen = phrases[Math.floor(Math.random() * phrases.length)];
+  return phrases[Math.floor(Math.random() * phrases.length)];
+}
+
+function escapeAppleScriptString(text) {
+  return text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function runAppleScript(script, cb) {
+  execFile('osascript', ['-e', script], (err, stdout) => {
+    cb(err, stdout ? stdout.trim() : '');
+  });
+}
+
+function runAppleScriptJavaScript(script, cb) {
+  execFile('osascript', ['-l', 'JavaScript', '-e', script], (err, stdout) => {
+    cb(err, stdout ? stdout.trim() : '');
+  });
+}
+
+function getFrontmostAppMac(cb) {
+  const script = [
+    'ObjC.import("AppKit");',
+    'const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;',
+    'JSON.stringify({',
+    '  name: ObjC.unwrap(app.localizedName),',
+    '  bundleId: ObjC.unwrap(app.bundleIdentifier)',
+    '});',
+  ].join('\n');
+
+  runAppleScriptJavaScript(script, (err, stdout) => {
+    if (err) return cb(err);
+    try {
+      cb(null, JSON.parse(stdout));
+    } catch (parseErr) {
+      cb(parseErr);
+    }
+  });
+}
+
+function getFrontWindowTitleMac(appName, cb) {
+  const escapedName = escapeAppleScriptString(appName);
+  const script = [
+    'tell application "System Events"',
+    `  tell process "${escapedName}"`,
+    '    get name of front window',
+    '  end tell',
+    'end tell',
+  ].join('\n');
+
+  runAppleScript(script, (err, stdout) => {
+    if (err) return cb(err);
+    cb(null, stdout);
+  });
+}
+
+function getFrontTerminalTtyMac(appInfo, cb) {
+  if (appInfo.bundleId !== APPLE_TERMINAL_BUNDLE_ID) {
+    cb(null, null);
+    return;
+  }
+
+  const script = [
+    'tell application "Terminal"',
+    '  if not (exists front window) then return ""',
+    '  get tty of selected tab of front window',
+    'end tell',
+  ].join('\n');
+
+  runAppleScript(script, (err, stdout) => {
+    if (err) return cb(err);
+    cb(null, stdout || null);
+  });
+}
+
+function isCodexCommandLine(text) {
+  return /(^|[\\/ ])codex(\s|$)/i.test(text);
+}
+
+function isKnownTerminalApp(appInfo) {
+  return KNOWN_TERMINAL_BUNDLE_IDS.has(appInfo.bundleId);
+}
+
+function titleLooksLikeCodexCli(title) {
+  return /\bcodex\b/i.test(title || '');
+}
+
+function checkTtyForCodexMac(tty, cb) {
+  if (!tty) {
+    cb(null, false);
+    return;
+  }
+
+  execFile('ps', ['-t', path.basename(tty), '-o', 'command='], (err, stdout) => {
+    if (err) return cb(err);
+    const isCodex = stdout
+      .split('\n')
+      .map(line => line.trim())
+      .some(line => isCodexCommandLine(line));
+    cb(null, isCodex);
+  });
+}
+
+function detectCodexCliMac(appInfo, cb) {
+  if (!isKnownTerminalApp(appInfo)) {
+    cb(null, false);
+    return;
+  }
+
+  getFrontTerminalTtyMac(appInfo, (ttyErr, tty) => {
+    if (ttyErr) {
+      console.warn('terminal tty lookup failed:', ttyErr.message);
+    }
+
+    const fallbackToTitle = () => {
+      getFrontWindowTitleMac(appInfo.name, (titleErr, title) => {
+        if (titleErr) return cb(titleErr);
+        cb(null, titleLooksLikeCodexCli(title));
+      });
+    };
+
+    if (!tty) {
+      fallbackToTitle();
+      return;
+    }
+
+    checkTtyForCodexMac(tty, (psErr, isCodex) => {
+      if (psErr) {
+        console.warn('tty codex detection failed:', psErr.message);
+        fallbackToTitle();
+        return;
+      }
+
+      if (isCodex) {
+        cb(null, true);
+        return;
+      }
+
+      fallbackToTitle();
+    });
+  });
+}
+
+// ── IPC ─────────────────────────────────────────────────────────────────────
+function isTrustedOverlaySender(event) {
+  if (!overlay || overlay.isDestroyed()) return false;
+  const contents = overlay.webContents;
+  return !!contents && !contents.isDestroyed() && event.sender === contents;
+}
+
+function guardOverlayEvent(event, channel) {
+  if (isTrustedOverlaySender(event)) return true;
+  console.warn(`Ignoring ${channel} from unexpected renderer`);
+  return false;
+}
+
+ipcMain.on('whip-crack', event => {
+  if (!guardOverlayEvent(event, 'whip-crack')) return;
+  try {
+    sendMacro();
+  } catch (err) {
+    console.warn('sendMacro failed:', err?.message || err);
+  }
+});
+ipcMain.on('hide-overlay', event => {
+  if (!guardOverlayEvent(event, 'hide-overlay')) return;
+  if (overlay) overlay.hide();
+});
+
+// ── Macro: immediate Ctrl+C, type "Go FASER", Enter ───────────────────────
+function sendMacro() {
+  const chosen = getRandomPhrase();
 
   if (process.platform === 'win32') {
     sendMacroWindows(chosen);
@@ -221,11 +392,10 @@ function sendMacroWindows(text) {
   keybd_event(VK_RETURN, 0, KEYUP, 0);
 }
 
-function sendMacroMac(text) {
+function sendTextAndSubmitMac(text) {
   const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   const script = [
     'tell application "System Events"',
-    '  key code 8 using {command down}', // Cmd+C
     '  delay 0.03',
     `  keystroke "${escaped}"`,
     '  key code 36', // Enter
@@ -236,6 +406,71 @@ function sendMacroMac(text) {
     if (err) {
       console.warn('mac macro failed (enable Accessibility for terminal/app):', err.message);
     }
+  });
+}
+
+function sendTextAndCodexSteerMac(text) {
+  const escaped = escapeAppleScriptString(text);
+  const script = [
+    'tell application "System Events"',
+    '  delay 0.03',
+    `  keystroke "${escaped}"`,
+    '  key code 36 using {command down}', // Cmd+Enter steers when follow-up behavior defaults to queue
+    'end tell'
+  ].join('\n');
+
+  runAppleScript(script, err => {
+    if (err) {
+      console.warn('codex steer macro failed (enable Accessibility for terminal/app):', err.message);
+    }
+  });
+}
+
+function sendInterruptAndSubmitMac(text) {
+  const escaped = escapeAppleScriptString(text);
+  const script = [
+    'tell application "System Events"',
+    '  key code 8 using {command down}', // Cmd+C
+    '  delay 0.03',
+    `  keystroke "${escaped}"`,
+    '  key code 36', // Enter
+    'end tell'
+  ].join('\n');
+
+  runAppleScript(script, err => {
+    if (err) {
+      console.warn('mac macro failed (enable Accessibility for terminal/app):', err.message);
+    }
+  });
+}
+
+function sendMacroMac(text) {
+  getFrontmostAppMac((frontErr, appInfo) => {
+    if (frontErr || !appInfo) {
+      console.warn('frontmost app lookup failed, using legacy macro:', frontErr?.message || frontErr);
+      sendInterruptAndSubmitMac(text);
+      return;
+    }
+
+    if (appInfo.bundleId === CODEX_APP_BUNDLE_ID) {
+      sendTextAndCodexSteerMac(text);
+      return;
+    }
+
+    detectCodexCliMac(appInfo, (detectErr, isCodexCli) => {
+      if (detectErr) {
+        console.warn('codex cli detection failed, using legacy macro:', detectErr.message);
+        sendInterruptAndSubmitMac(text);
+        return;
+      }
+
+      if (isCodexCli) {
+        sendTextAndSubmitMac(text);
+        return;
+      }
+
+      sendInterruptAndSubmitMac(text);
+    });
   });
 }
 

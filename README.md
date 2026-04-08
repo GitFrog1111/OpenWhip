@@ -1,14 +1,14 @@
-# badclaude
+# badclaude-and-codex
 
 ![Whip divider](assets/divider.png)
 
-Sometimes claude code is going too shlow, and you must whip him into shape..
+Sometimes Claude Code or Codex is going too shlow, and you must whip them into shape..
 
 ## Install + run
 
 ```bash
-npm install -g badclaude
-badclaude
+npm install -g badclaude-and-codex
+badclaude-and-codex
 ```
 
 ## Controls
@@ -16,7 +16,9 @@ badclaude
 - Click tray icon: spawn whip.
 - Click: drop whip.
 - Whip him 😩💢
-- It sends an interrupt (Ctrl-C) and one of 5 encouraging messages!
+- Codex app: sends a steering follow-up and submits it.
+- Codex CLI: sends a follow-up and submits it.
+- Other apps: falls back to an interrupt-style macro and a random encouraging message.
 
 ## Roadmap
 
