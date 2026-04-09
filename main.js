@@ -52,6 +52,17 @@ function refocusPreviousApp() {
           console.warn('refocus previous app (Cmd+Tab) failed:', err.message);
         }
       });
+    } else if (process.platform === 'linux') {
+      if (process.env.XDG_SESSION_TYPE === 'wayland') {
+        // ydotool scancodes: 56=Alt, 15=Tab
+        execFile('ydotool', ['key', '56:1', '15:1', '15:0', '56:0'], err => {
+          if (err) console.warn('refocus (ydotool Alt+Tab) failed:', err.message);
+        });
+      } else {
+        execFile('xdotool', ['key', 'alt+Tab'], err => {
+          if (err) console.warn('refocus (xdotool Alt+Tab) failed:', err.message);
+        });
+      }
     }
   };
   setTimeout(run, delayMs);
@@ -192,6 +203,8 @@ function sendMacro() {
     sendMacroWindows(chosen);
   } else if (process.platform === 'darwin') {
     sendMacroMac(chosen);
+  } else if (process.platform === 'linux') {
+    sendMacroLinux(chosen);
   }
 }
 
@@ -237,6 +250,37 @@ function sendMacroMac(text) {
       console.warn('mac macro failed (enable Accessibility for terminal/app):', err.message);
     }
   });
+}
+
+function sendMacroLinux(text) {
+  if (process.env.XDG_SESSION_TYPE === 'wayland') {
+    // ydotool uses uinput — requires ydotoold service and user in 'input' group
+    // Scancodes: 29=LCtrl, 46=C, 28=Enter
+    execFile('ydotool', ['key', '29:1', '46:1', '46:0', '29:0'], err => {
+      if (err) {
+        console.warn('ydotool failed (ensure ydotoold is running and user is in input group):', err.message);
+        return;
+      }
+      setTimeout(() => {
+        execFile('ydotool', ['type', '--', text], () => {
+          execFile('ydotool', ['key', '28:1', '28:0']);
+        });
+      }, 30);
+    });
+  } else {
+    // xdotool for X11
+    execFile('xdotool', ['key', 'ctrl+c'], err => {
+      if (err) {
+        console.warn('xdotool failed:', err.message);
+        return;
+      }
+      setTimeout(() => {
+        execFile('xdotool', ['type', '--clearmodifiers', text], () => {
+          execFile('xdotool', ['key', 'Return']);
+        });
+      }, 30);
+    });
+  }
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
