@@ -127,7 +127,9 @@ async function getTrayIcon() {
 
 // ── Overlay window ──────────────────────────────────────────────────────────
 function createOverlay() {
-  const { bounds } = screen.getPrimaryDisplay();
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const { bounds } = display;
   overlay = new BrowserWindow({
     x: bounds.x, y: bounds.y,
     width: bounds.width, height: bounds.height,
