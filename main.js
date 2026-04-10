@@ -222,20 +222,44 @@ function sendMacroWindows(text) {
 }
 
 function sendMacroMac(text) {
-  const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const script = [
+  // Step 1: Ctrl+C interrupt (not Cmd+C which is copy on macOS)
+  const step1 = [
     'tell application "System Events"',
-    '  key code 8 using {command down}', // Cmd+C
-    '  delay 0.03',
-    `  keystroke "${escaped}"`,
-    '  key code 36', // Enter
+    '  key code 8 using {control down}',
     'end tell'
   ].join('\n');
 
-  execFile('osascript', ['-e', script], err => {
-    if (err) {
-      console.warn('mac macro failed (enable Accessibility for terminal/app):', err.message);
-    }
+  execFile('osascript', ['-e', step1], err => {
+    if (err) console.warn('Ctrl+C failed:', err.message);
+    // Step 2: paste text via clipboard
+    setTimeout(() => {
+      const { execFileSync } = require('child_process');
+      try {
+        execFileSync('pbcopy', { input: text });
+      } catch (e) {
+        console.warn('pbcopy failed:', e.message);
+        return;
+      }
+      const paste = [
+        'tell application "System Events"',
+        '  key code 9 using {command down}', // Cmd+V paste
+        'end tell'
+      ].join('\n');
+      execFile('osascript', ['-e', paste], err => {
+        if (err) console.warn('paste failed:', err.message);
+        // Step 3: Enter after paste completes
+        setTimeout(() => {
+          const enter = [
+            'tell application "System Events"',
+            '  key code 36', // Enter
+            'end tell'
+          ].join('\n');
+          execFile('osascript', ['-e', enter], err => {
+            if (err) console.warn('enter failed:', err.message);
+          });
+        }, 200);
+      });
+    }, 300);
   });
 }
 
