@@ -60,9 +60,12 @@ function refocusPreviousApp() {
 function createTrayIconFallback() {
   const p = path.join(__dirname, 'icon', 'Template.png');
   if (fs.existsSync(p)) {
-    const img = nativeImage.createFromPath(p);
+    let img = nativeImage.createFromPath(p);
     if (!img.isEmpty()) {
-      if (process.platform === 'darwin') img.setTemplateImage(true);
+      if (process.platform === 'darwin') {
+        img = img.resize({ width: 22, height: 22 });
+        img.setTemplateImage(true);
+      }
       return img;
     }
   }
@@ -90,25 +93,6 @@ async function getTrayIcon() {
     return createTrayIconFallback();
   }
   if (process.platform === 'darwin') {
-    const file = path.join(iconDir, 'AppIcon.icns');
-    if (fs.existsSync(file)) {
-      const fromPath = nativeImage.createFromPath(file);
-      if (!fromPath.isEmpty()) return fromPath;
-      try {
-        const t = await tryIcnsTrayImage(file);
-        if (t) return t;
-      } catch (e) {
-        console.warn('AppIcon.icns Quick Look thumbnail failed:', e?.message || e);
-      }
-      const tmp = path.join(os.tmpdir(), 'badclaude-tray.icns');
-      try {
-        fs.copyFileSync(file, tmp);
-        const t = await tryIcnsTrayImage(tmp);
-        if (t) return t;
-      } catch (e) {
-        console.warn('AppIcon.icns temp copy + thumbnail failed:', e?.message || e);
-      }
-    }
     return createTrayIconFallback();
   }
   return createTrayIconFallback();
@@ -222,20 +206,44 @@ function sendMacroWindows(text) {
 }
 
 function sendMacroMac(text) {
-  const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const script = [
+  // Step 1: Ctrl+C interrupt (not Cmd+C which is copy on macOS)
+  const step1 = [
     'tell application "System Events"',
-    '  key code 8 using {command down}', // Cmd+C
-    '  delay 0.03',
-    `  keystroke "${escaped}"`,
-    '  key code 36', // Enter
+    '  key code 8 using {control down}',
     'end tell'
   ].join('\n');
 
-  execFile('osascript', ['-e', script], err => {
-    if (err) {
-      console.warn('mac macro failed (enable Accessibility for terminal/app):', err.message);
-    }
+  execFile('osascript', ['-e', step1], err => {
+    if (err) console.warn('Ctrl+C failed:', err.message);
+    // Step 2: paste text via clipboard
+    setTimeout(() => {
+      const { execFileSync } = require('child_process');
+      try {
+        execFileSync('pbcopy', { input: text });
+      } catch (e) {
+        console.warn('pbcopy failed:', e.message);
+        return;
+      }
+      const paste = [
+        'tell application "System Events"',
+        '  key code 9 using {command down}', // Cmd+V paste
+        'end tell'
+      ].join('\n');
+      execFile('osascript', ['-e', paste], err => {
+        if (err) console.warn('paste failed:', err.message);
+        // Step 3: Enter after paste completes
+        setTimeout(() => {
+          const enter = [
+            'tell application "System Events"',
+            '  key code 36', // Enter
+            'end tell'
+          ].join('\n');
+          execFile('osascript', ['-e', enter], err => {
+            if (err) console.warn('enter failed:', err.message);
+          });
+        }, 200);
+      });
+    }, 300);
   });
 }
 
