@@ -2,8 +2,10 @@
 <html>
 <head>
 <style>
-  * { margin: 0; padding: 0; cursor: none; }
+  * { margin: 0; padding: 0; }
   html, body { overflow: hidden; background: transparent; width: 100%; height: 100%; }
+  body.linux-overlay-fallback { background: rgba(0, 0, 0, 0.07); }
+  body.whip-active, body.whip-active * { cursor: none; }
   canvas { display: block; }
 </style>
 </head>
@@ -85,16 +87,24 @@ let whipSpawnTime = 0;
 let handleAngle = P.baseTargetAngle;
 let handleAngVel = 0;
 
+function setCursorHidden(hidden) {
+  document.body.classList.toggle('whip-active', hidden);
+}
+
 const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
 
 document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
 document.addEventListener('mousedown', () => {
-  if (whip && !dropping) dropping = true;
+  if (whip && !dropping) {
+    dropping = true;
+    setCursorHidden(false);
+  }
 });
 
 // ── Whip creation ───────────────────────────────────────────────────────────
 function spawnWhip(mx, my) {
   dropping = false;
+  setCursorHidden(true);
   lastCrackTime = 0;
   whipSpawnTime = Date.now();
   const pts = [];
@@ -370,6 +380,7 @@ function update() {
   if (dropping && whip.every(p => p.y > H + 60)) {
     whip = null;
     dropping = false;
+    setCursorHidden(false);
     window.bridge.hideOverlay();
   }
   prevMouseX = mouseX;
@@ -439,6 +450,7 @@ loop();
 window.bridge.onSpawnWhip(() => {
   whip = spawnWhip(mouseX || W / 2, mouseY || H / 2);
   dropping = false;
+  setCursorHidden(true);
   prevMouseX = mouseX;
   prevMouseY = mouseY;
   handleAngle = P.baseTargetAngle;
@@ -446,7 +458,14 @@ window.bridge.onSpawnWhip(() => {
 });
 
 window.bridge.onDropWhip(() => {
-  if (whip && !dropping) dropping = true;
+  if (whip && !dropping) {
+    dropping = true;
+    setCursorHidden(false);
+  }
+});
+
+window.bridge.onLinuxOverlayMode?.(({ fallback }) => {
+  document.body.classList.toggle('linux-overlay-fallback', Boolean(fallback));
 });
 
 </script>

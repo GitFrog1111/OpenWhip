@@ -9,6 +9,7 @@
   },
   "os": [
     "darwin",
+    "linux",
     "win32"
   ],
   "engines": {
@@ -32,14 +33,16 @@
     "main.js",
     "preload.js",
     "overlay.html",
+    "launcher.html",
+    "scripts/start.js",
     "sounds",
     "icon",
     "bin/badclaude.js",
     "README.md"
   ],
   "scripts": {
-    "start": "electron .",
-    "dev": "electron .",
+    "start": "node scripts/start.js",
+    "dev": "node scripts/start.js",
     "pack": "npm pack"
   },
   "dependencies": {

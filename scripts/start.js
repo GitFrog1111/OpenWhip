@@ -5,8 +5,8 @@ const { spawn } = require('child_process');
 let electronBinary;
 try {
   electronBinary = require('electron');
-} catch (e) {
-  console.error('Could not load Electron. Try: npm install -g badclaude');
+} catch (err) {
+  console.error('Could not load Electron. Run `npm install` first.');
   process.exit(1);
 }
 
@@ -19,15 +19,20 @@ if (process.platform === 'linux' && env.WAYLAND_DISPLAY && env.DISPLAY && !env.E
 }
 
 const child = spawn(electronBinary, [appPath, ...extraArgs], {
-  detached: true,
   env,
-  stdio: 'ignore',
+  stdio: 'inherit',
   windowsHide: true,
 });
 
-child.on('error', (err) => {
+child.on('error', err => {
   console.error('Failed to start badclaude:', err.message);
   process.exit(1);
 });
 
-child.unref();
+child.on('exit', (code, signal) => {
+  if (signal) {
+    process.kill(process.pid, signal);
+    return;
+  }
+  process.exit(code ?? 0);
+});
