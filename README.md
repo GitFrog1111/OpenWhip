@@ -1,4 +1,4 @@
-# badclaude
+# OpenWhip
 
 ![Whip divider](assets/divider.png)
 
@@ -7,8 +7,14 @@ Sometimes claude code is going too shlow, and you must whip him into shape..
 ## Install + run
 
 ```bash
-npm install -g badclaude
-badclaude
+npm install -g openwhip
+openwhip
+```
+
+windows and mac supported out of the box, but Linux is a special snowflake so you need to install `xdotool` for keyboard automation
+
+```bash
+sudo apt install xdotool
 ```
 
 ## Controls

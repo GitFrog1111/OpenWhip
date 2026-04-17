@@ -1,16 +1,17 @@
 {
-  "name": "badclaude",
-  "version": "1.0.2",
+  "name": "openwhip",
+  "version": "1.1.0",
   "description": "Whip Claude into shape",
   "license": "MIT",
   "main": "main.js",
   "bin": {
-    "badclaude": "bin/badclaude.js"
+    "openwhip": "bin/openwhip.js",
+    "badclaude": "bin/openwhip.js"
   },
   "os": [
     "darwin",
-    "win32",
-    "linux"
+    "linux",
+    "win32"
   ],
   "engines": {
     "node": ">=18.0.0"
@@ -23,18 +24,19 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GitFrog1111/badclaude.git"
+    "url": "git+https://github.com/GitFrog1111/OpenWhip.git"
   },
   "bugs": {
-    "url": "https://github.com/GitFrog1111/badclaude/issues"
+    "url": "https://github.com/GitFrog1111/OpenWhip/issues"
   },
-  "homepage": "https://github.com/GitFrog1111/badclaude#readme",
+  "homepage": "https://github.com/GitFrog1111/OpenWhip#readme",
   "files": [
     "main.js",
     "preload.js",
     "overlay.html",
     "sounds",
     "icon",
+    "bin/openwhip.js",
     "bin/badclaude.js",
     "README.md"
   ],
