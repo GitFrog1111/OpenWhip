@@ -20,7 +20,10 @@
     "electron",
     "tray",
     "overlay",
-    "cli"
+    "cli",
+    "dog-mode",
+    "discipline",
+    "plugin"
   ],
   "repository": {
     "type": "git",
@@ -38,7 +41,8 @@
     "icon",
     "bin/openwhip.js",
     "bin/badclaude.js",
-    "README.md"
+    "README.md",
+    "modes"
   ],
   "scripts": {
     "start": "electron .",
@@ -46,7 +50,9 @@
     "pack": "npm pack"
   },
   "dependencies": {
-    "electron": "^33.0.0",
-    "koffi": "^2.9.0"
+    "electron": "^33.0.0"
+  },
+  "optionalDependencies": {
+    "koffi": "^2.9.22"
   }
 }
