@@ -60,6 +60,12 @@ function refocusPreviousApp() {
           console.warn('refocus previous app (Cmd+Tab) failed:', err.message);
         }
       });
+    } else if (process.platform === 'linux') {
+      execFile('xdotool', ['key', '--clearmodifiers', 'alt+Tab'], err => {
+        if (err) {
+          console.warn('refocus previous app (Alt+Tab) failed. Install xdotool:', err.message);
+        }
+      });
     }
   };
   setTimeout(run, delayMs);
@@ -74,7 +80,7 @@ function createTrayIconFallback() {
       return img;
     }
   }
-  console.warn('badclaude: icon/Template.png missing or invalid');
+  console.warn('openwhip: icon/Template.png missing or invalid');
   return nativeImage.createEmpty();
 }
 
@@ -106,7 +112,7 @@ async function getTrayIcon() {
       } catch (e) {
         console.warn('AppIcon.icns Quick Look thumbnail failed:', e?.message || e);
       }
-      const tmp = path.join(os.tmpdir(), 'badclaude-tray.icns');
+      const tmp = path.join(os.tmpdir(), 'openwhip-tray.icns');
       try {
         fs.copyFileSync(file, tmp);
         const t = await tryIcnsTrayImage(tmp);
@@ -286,94 +292,55 @@ function sendMacroWindows(text, doInterrupt = true) {
 
 function sendMacroMac(text, doInterrupt = true) {
   const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const lines = [
-    'tell application "System Events"',
-  ];
-  if (doInterrupt) {
-    lines.push('  key code 8 using {command down}'); // Cmd+C
-    lines.push('  delay 0.03');
-  }
-  lines.push(`  keystroke "${escaped}"`);
-  lines.push('  key code 36'); // Enter
-  lines.push('end tell');
-  const script = lines.join('\n');
 
-  execFile('osascript', ['-e', script], err => {
+  const interruptScript = [
+    'tell application "System Events"',
+    '  key code 8 using {control down}', // Ctrl+C interrupt
+    'end tell'
+  ].join('\n');
+  const typeAndEnterScript = [
+    'tell application "System Events"',
+    `  keystroke "${escaped}"`,
+    '  key code 36', // Enter
+    'end tell'
+  ].join('\n');
+
+  execFile('osascript', ['-e', interruptScript], err => {
     if (err) {
       console.warn('mac macro failed (enable Accessibility for terminal/app):', err.message);
+      return;
     }
+
+    setTimeout(() => {
+      execFile('osascript', ['-e', typeAndEnterScript], err2 => {
+        if (err2) {
+          console.warn('mac macro failed (enable Accessibility for terminal/app):', err2.message);
+        }
+      });
+    }, 300);
   });
 }
 
-// ── Hotkey management ───────────────────────────────────────────────────────
-function registerHotkeys() {
-  // Unregister all first
-  globalShortcut.unregisterAll();
-
-  // Register hotkeys for the active mode's actions
-  for (const action of activeMode.actions) {
-    if (action.hotkey) {
-      const registered = globalShortcut.register(action.hotkey, () => {
-        triggerAction(action.id);
-      });
-      if (!registered) {
-        console.warn(`Failed to register hotkey ${action.hotkey} for ${action.id}`);
+function sendMacroLinux(text) {
+  execFile(
+    'xdotool',
+    [
+      'key', '--clearmodifiers', 'ctrl+c',
+      'type', '--delay', '1', '--clearmodifiers', '--', text,
+      'key', 'Return',
+    ],
+    err => {
+      if (err) {
+        console.warn('linux macro failed. Install xdotool:', err.message);
       }
     }
-  }
-}
-
-function switchMode(modeId) {
-  const mode = modes.find(m => m.id === modeId);
-  if (!mode) return;
-  activeMode = mode;
-  registerHotkeys();
-  rebuildTrayMenu();
-}
-
-// ── Tray menu ───────────────────────────────────────────────────────────────
-function rebuildTrayMenu() {
-  if (!tray) return;
-
-  const template = [];
-
-  // Mode selection (radio buttons)
-  template.push({ label: 'Mode', enabled: false });
-  for (const mode of modes) {
-    template.push({
-      label: mode.name,
-      type: 'radio',
-      checked: activeMode.id === mode.id,
-      click: () => switchMode(mode.id),
-    });
-  }
-
-  // Separator
-  template.push({ type: 'separator' });
-
-  // Actions for active mode
-  if (activeMode.actions.length > 1) {
-    template.push({ label: `${activeMode.name} Actions`, enabled: false });
-    for (const action of activeMode.actions) {
-      const hotkeyLabel = action.hotkey ? ` (${action.hotkey.replace('CommandOrControl', '⌘').replace('+Shift+', '⇧')})` : '';
-      template.push({
-        label: `${action.label}${hotkeyLabel}`,
-        click: () => triggerAction(action.id),
-      });
-    }
-    template.push({ type: 'separator' });
-  }
-
-  template.push({ label: 'Quit', click: () => app.quit() });
-
-  // Store menu for right-click popup — do NOT use setContextMenu (it hijacks left-click on macOS)
-  trayMenu = Menu.buildFromTemplate(template);
+  );
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   tray = new Tray(await getTrayIcon());
-  tray.setToolTip('Bad Claude – click to discipline');
+  tray.setToolTip('OpenWhip – click to discipline');
   tray.on('click', handleTrayClick);
   tray.on('right-click', () => {
     if (trayMenu) tray.popUpContextMenu(trayMenu);
