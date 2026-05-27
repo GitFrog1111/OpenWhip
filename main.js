@@ -53,11 +53,18 @@ function refocusPreviousApp() {
         }
       });
     } else if (process.platform === 'linux') {
-      execFile('xdotool', ['key', '--clearmodifiers', 'alt+Tab'], err => {
-        if (err) {
-          console.warn('refocus previous app (Alt+Tab) failed. Install xdotool:', err.message);
-        }
-      });
+      if (process.env.XDG_SESSION_TYPE === 'wayland') {
+        // ydotool scancodes: 56=Alt, 15=Tab
+        execFile('ydotool', ['key', '56:1', '15:1', '15:0', '56:0'], err => {
+          if (err) console.warn('refocus (ydotool Alt+Tab) failed:', err.message);
+        });
+      } else {
+        execFile('xdotool', ['key', '--clearmodifiers', 'alt+Tab'], err => {
+          if (err) {
+            console.warn('refocus previous app (Alt+Tab) failed. Install xdotool:', err.message);
+          }
+        });
+      }
     }
   };
   setTimeout(run, delayMs);
@@ -122,7 +129,9 @@ async function getTrayIcon() {
 
 // ── Overlay window ──────────────────────────────────────────────────────────
 function createOverlay() {
-  const { bounds } = screen.getPrimaryDisplay();
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const { bounds } = display;
   overlay = new BrowserWindow({
     x: bounds.x, y: bounds.y,
     width: bounds.width, height: bounds.height,
@@ -260,19 +269,35 @@ function sendMacroMac(text) {
 }
 
 function sendMacroLinux(text) {
-  execFile(
-    'xdotool',
-    [
-      'key', '--clearmodifiers', 'ctrl+c',
-      'type', '--delay', '1', '--clearmodifiers', '--', text,
-      'key', 'Return',
-    ],
-    err => {
+  if (process.env.XDG_SESSION_TYPE === 'wayland') {
+    // ydotool uses uinput — requires ydotoold service and user in 'input' group
+    // Scancodes: 29=LCtrl, 46=C, 28=Enter
+    execFile('ydotool', ['key', '29:1', '46:1', '46:0', '29:0'], err => {
       if (err) {
-        console.warn('linux macro failed. Install xdotool:', err.message);
+        console.warn('ydotool failed (ensure ydotoold is running and user is in input group):', err.message);
+        return;
       }
-    }
-  );
+      setTimeout(() => {
+        execFile('ydotool', ['type', '--', text], () => {
+          execFile('ydotool', ['key', '28:1', '28:0']);
+        });
+      }, 30);
+    });
+  } else {
+    execFile(
+      'xdotool',
+      [
+        'key', '--clearmodifiers', 'ctrl+c',
+        'type', '--delay', '1', '--clearmodifiers', '--', text,
+        'key', 'Return',
+      ],
+      err => {
+        if (err) {
+          console.warn('linux macro failed. Install xdotool:', err.message);
+        }
+      }
+    );
+  }
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
