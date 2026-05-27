@@ -47,6 +47,12 @@ const P = {
   // Screen-edge slap
   wallBounce:      0.42,   // velocity retained after wall hit
   wallFriction:    0.86,   // tangential damping on wall hit
+  slapHeartMinSpeed: 14,   // minimum impact speed to spawn hearts
+  slapHeartCooldownMs: 120, // per-point debounce so one slap doesn't spam hearts
+  crackHeartBurstScale: 1.25, // stronger burst for an in-air whip crack
+  heartLifetimeMs: 700,
+  heartRise:       18,
+  heartSize:       22,
 
   // Crack detection
   crackSpeed:     340,     // tip velocity threshold to trigger crack
@@ -84,6 +90,7 @@ let lastCrackTime = 0;
 let whipSpawnTime = 0;
 let handleAngle = P.baseTargetAngle;
 let handleAngVel = 0;
+let hearts = [];
 
 const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
 
@@ -165,6 +172,57 @@ function playCrackSound() {
   const src = WHIP_CRACK_SOUNDS[Math.floor(Math.random() * WHIP_CRACK_SOUNDS.length)];
   const a = new Audio(src);
   a.play().catch(() => {});
+}
+
+function spawnHeartBurst(x, y, vx, vy, opts = {}) {
+  const now = performance.now();
+  const count = opts.count ?? 3;
+  const scale = opts.scale ?? 1;
+  for (let i = 0; i < count; i++) {
+    const spread = i - 1;
+    hearts.push({
+      x: x + spread * 4.5 * scale,
+      y: y - Math.abs(spread) * 2.5 * scale,
+      vx: vx * 0.07 + spread * 0.32 * scale,
+      vy: -0.95 - Math.abs(vy) * 0.016 - Math.random() * 0.35 * scale,
+      bornAt: now,
+      size: P.heartSize * scale * (0.9 + Math.random() * 0.28),
+      drift: (Math.random() - 0.5) * 0.16,
+      rot: (Math.random() - 0.5) * 0.5,
+    });
+  }
+  if (hearts.length > 60) hearts = hearts.slice(-60);
+}
+
+function updateHearts(now) {
+  hearts = hearts.filter(h => now - h.bornAt < P.heartLifetimeMs);
+  for (const h of hearts) {
+    h.x += h.vx + h.drift;
+    h.y += h.vy;
+    h.vx *= 0.98;
+    h.vy *= 0.98;
+  }
+}
+
+function drawHeart(x, y, size, alpha, rotation) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.scale(size / 18, size / 18);
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  ctx.moveTo(0, 6);
+  ctx.bezierCurveTo(0, 0, -9, -1, -9, -7);
+  ctx.bezierCurveTo(-9, -12, -4, -14, 0, -10);
+  ctx.bezierCurveTo(4, -14, 9, -12, 9, -7);
+  ctx.bezierCurveTo(9, -1, 0, 0, 0, 6);
+  ctx.closePath();
+  ctx.fillStyle = '#ff4f87';
+  ctx.fill();
+  ctx.lineWidth = 1.4;
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+  ctx.stroke();
+  ctx.restore();
 }
 
 function updateHandleAim() {
@@ -288,6 +346,15 @@ function applyWallCollisions() {
     }
 
     if (hit) {
+      const impactSpeed = Math.hypot(vx, vy);
+      const now = performance.now();
+      if (
+        impactSpeed >= P.slapHeartMinSpeed &&
+        now - (p.lastSlapHeartAt || 0) >= P.slapHeartCooldownMs
+      ) {
+        p.lastSlapHeartAt = now;
+        spawnHeartBurst(p.x, p.y, vx, vy);
+      }
       p.px = p.x - vx;
       p.py = p.y - vy;
     }
@@ -361,6 +428,10 @@ function update() {
     const now = Date.now();
     if (now - whipSpawnTime >= P.firstCrackGraceMs && now - lastCrackTime > P.crackCooldownMs) {
       lastCrackTime = now;
+      spawnHeartBurst(tip.x, tip.y, tip.x - tip.px, tip.y - tip.py, {
+        count: 4,
+        scale: P.crackHeartBurstScale,
+      });
       playCrackSound();
       window.bridge.whipCrack();
     }
@@ -378,11 +449,21 @@ function update() {
 
 // ── Rendering ───────────────────────────────────────────────────────────────
 function draw() {
+  const now = performance.now();
   ctx.clearRect(0, 0, W, H);
 
   // Near-invisible fill so the window captures mouse events on Windows
   ctx.fillStyle = `rgba(0,0,0,${P.bgAlpha})`;
   ctx.fillRect(0, 0, W, H);
+
+  for (const h of hearts) {
+    const age = now - h.bornAt;
+    const t = clamp(age / P.heartLifetimeMs, 0, 1);
+    const alpha = 1 - t;
+    const rise = t * P.heartRise;
+    const scale = 0.8 + Math.sin(t * Math.PI) * 0.28;
+    drawHeart(h.x, h.y - rise, h.size * scale, alpha, h.rot * (1 - t));
+  }
 
   if (!whip) return;
 
@@ -429,6 +510,7 @@ function draw() {
 
 // ── Main loop ───────────────────────────────────────────────────────────────
 function loop() {
+  updateHearts(performance.now());
   update();
   draw();
   requestAnimationFrame(loop);
