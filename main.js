@@ -121,8 +121,20 @@ async function getTrayIcon() {
 }
 
 // ── Overlay window ──────────────────────────────────────────────────────────
+function getAllDisplaysBounds() {
+  const displays = screen.getAllDisplays();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const d of displays) {
+    minX = Math.min(minX, d.bounds.x);
+    minY = Math.min(minY, d.bounds.y);
+    maxX = Math.max(maxX, d.bounds.x + d.bounds.width);
+    maxY = Math.max(maxY, d.bounds.y + d.bounds.height);
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
 function createOverlay() {
-  const { bounds } = screen.getPrimaryDisplay();
+  const bounds = getAllDisplaysBounds();
   overlay = new BrowserWindow({
     x: bounds.x, y: bounds.y,
     width: bounds.width, height: bounds.height,
@@ -285,6 +297,24 @@ app.whenReady().then(async () => {
     ])
   );
   tray.on('click', toggleOverlay);
+
+  // Recreate overlay when displays are added/removed/repositioned so bounds stay correct.
+  const onDisplayChange = () => {
+    if (overlay) {
+      const wasVisible = overlay.isVisible();
+      overlay.close();
+      overlay = null;
+      overlayReady = false;
+      spawnQueued = false;
+      if (wasVisible) {
+        createOverlay();
+        overlay.show();
+      }
+    }
+  };
+  screen.on('display-added', onDisplayChange);
+  screen.on('display-removed', onDisplayChange);
+  screen.on('display-metrics-changed', onDisplayChange);
 });
 
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray
