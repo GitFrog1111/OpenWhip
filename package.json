@@ -33,7 +33,9 @@
   "files": [
     "main.js",
     "preload.js",
+    "preload-config.js",
     "overlay.html",
+    "config.html",
     "sounds",
     "icon",
     "bin/openwhip.js",

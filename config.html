@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>OpenWhip — Phrases</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1a1a1a;
+    color: #e6e6e6;
+    margin: 0;
+    padding: 20px;
+    user-select: none;
+  }
+  h2 { margin: 0 0 4px 0; font-size: 18px; }
+  .hint { color: #8a8a8a; font-size: 12px; margin: 0 0 14px 0; }
+  .row { display: flex; gap: 8px; margin-bottom: 12px; }
+  #phrase-input {
+    flex: 1;
+    padding: 8px 10px;
+    background: #2a2a2a;
+    color: #fff;
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+    font-size: 14px;
+    outline: none;
+  }
+  #phrase-input:focus { border-color: #3b82f6; }
+  button {
+    padding: 8px 14px;
+    background: #3b82f6;
+    color: #fff;
+    border: 0;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+  }
+  button:hover { background: #2563eb; }
+  button.ghost { background: #333; }
+  button.ghost:hover { background: #dc2626; }
+  #list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 16px 0;
+    max-height: 320px;
+    overflow-y: auto;
+    border: 1px solid #2a2a2a;
+    border-radius: 4px;
+    background: #161616;
+  }
+  #list li {
+    padding: 8px 12px;
+    border-bottom: 1px solid #232323;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  #list li:last-child { border-bottom: 0; }
+  #list li span {
+    flex: 1;
+    word-break: break-word;
+    user-select: text;
+  }
+  #list li.empty {
+    color: #666;
+    font-style: italic;
+    justify-content: center;
+  }
+  #start {
+    width: 100%;
+    padding: 12px;
+    background: #dc2626;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  #start:hover { background: #b91c1c; }
+  #start:disabled {
+    background: #3a3a3a;
+    cursor: not-allowed;
+  }
+  .footer {
+    margin-top: 10px;
+    font-size: 11px;
+    color: #666;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+  <h2>OpenWhip phrases</h2>
+  <p class="hint">One of these is typed (after Ctrl+C) each time you crack the whip.</p>
+
+  <div class="row">
+    <input id="phrase-input" placeholder="e.g. HURRY UP" maxlength="200" />
+    <button id="add">Add</button>
+  </div>
+
+  <ul id="list"></ul>
+
+  <button id="start">Start Whipping</button>
+  <div class="footer">Click tray icon → whip appears. Click to drop it.</div>
+
+<script>
+  const listEl = document.getElementById('list');
+  const input = document.getElementById('phrase-input');
+  const addBtn = document.getElementById('add');
+  const startBtn = document.getElementById('start');
+  let phrases = [];
+
+  function render() {
+    listEl.innerHTML = '';
+    if (phrases.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'No phrases yet — add at least one to start.';
+      listEl.appendChild(li);
+    } else {
+      phrases.forEach((p, i) => {
+        const li = document.createElement('li');
+        const span = document.createElement('span');
+        span.textContent = p;
+        const btn = document.createElement('button');
+        btn.textContent = 'Remove';
+        btn.className = 'ghost';
+        btn.onclick = () => {
+          phrases.splice(i, 1);
+          window.bridge.savePhrases(phrases);
+          render();
+        };
+        li.appendChild(span);
+        li.appendChild(btn);
+        listEl.appendChild(li);
+      });
+    }
+    startBtn.disabled = phrases.length === 0;
+  }
+
+  addBtn.onclick = () => {
+    const v = input.value.trim();
+    if (!v) return;
+    phrases.push(v);
+    input.value = '';
+    window.bridge.savePhrases(phrases);
+    render();
+    input.focus();
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); }
+  });
+
+  startBtn.onclick = () => {
+    if (phrases.length === 0) return;
+    window.bridge.savePhrases(phrases);
+    window.bridge.startWhipping();
+  };
+
+  window.bridge.getPhrases().then(p => {
+    phrases = Array.isArray(p) ? p.slice() : [];
+    render();
+    input.focus();
+  });
+</script>
+</body>
+</html>

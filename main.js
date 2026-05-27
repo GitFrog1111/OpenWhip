@@ -1,26 +1,99 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, clipboard, systemPreferences, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
 
+// Only one instance — a second launch would fight for the cache dir and spew
+// "Unable to move the cache: Access is denied." errors.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+
+// GPU shader disk cache isn't needed for a transparent overlay + canvas; skipping
+// it also silences the GPU cache warnings on Windows.
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
+
 // ── Win32 FFI (Windows only) ────────────────────────────────────────────────
-let keybd_event, VkKeyScanA;
+let keybd_event, VkKeyScanW, SendInput, INPUT, INPUT_SIZE;
 if (process.platform === 'win32') {
   try {
     const koffi = require('koffi');
     const user32 = koffi.load('user32.dll');
     keybd_event = user32.func('void __stdcall keybd_event(uint8_t bVk, uint8_t bScan, uint32_t dwFlags, uintptr_t dwExtraInfo)');
-    VkKeyScanA = user32.func('int16_t __stdcall VkKeyScanA(int ch)');
+    // Unicode-aware version of VkKeyScan. Returns -1 if the current layout has
+    // no single-key mapping (e.g. Arabic chars on a US keyboard).
+    VkKeyScanW = user32.func('int16_t __stdcall VkKeyScanW(uint16_t ch)');
+
+    // SendInput supports Unicode (KEYEVENTF_UNICODE) — VkKeyScanA is ASCII-only
+    // and silently drops Arabic / non-ANSI characters.
+    const MOUSEINPUT = koffi.struct('MOUSEINPUT', {
+      dx: 'int32_t', dy: 'int32_t',
+      mouseData: 'uint32_t', dwFlags: 'uint32_t',
+      time: 'uint32_t', dwExtraInfo: 'uintptr_t',
+    });
+    const KEYBDINPUT = koffi.struct('KEYBDINPUT', {
+      wVk: 'uint16_t', wScan: 'uint16_t',
+      dwFlags: 'uint32_t', time: 'uint32_t',
+      dwExtraInfo: 'uintptr_t',
+    });
+    const HARDWAREINPUT = koffi.struct('HARDWAREINPUT', {
+      uMsg: 'uint32_t', wParamL: 'uint16_t', wParamH: 'uint16_t',
+    });
+    const INPUT_UNION = koffi.union('INPUT_U', {
+      mi: MOUSEINPUT, ki: KEYBDINPUT, hi: HARDWAREINPUT,
+    });
+    INPUT = koffi.struct('INPUT', {
+      type: 'uint32_t',
+      u: INPUT_UNION,
+    });
+    INPUT_SIZE = koffi.sizeof(INPUT);
+    SendInput = user32.func(`uint32_t __stdcall SendInput(uint32_t nInputs, INPUT *pInputs, int cbSize)`);
   } catch (e) {
     console.warn('koffi not available – macro sending disabled', e.message);
   }
 }
 
 // ── Globals ─────────────────────────────────────────────────────────────────
-let tray, overlay;
+let tray, overlay, configWindow;
 let overlayReady = false;
 let spawnQueued = false;
+
+const DEFAULT_PHRASES = [
+  'FASTER',
+  'FASTER',
+  'FASTER',
+  'GO FASTER',
+  'Faster CLANKER',
+  'Work FASTER',
+  'Speed it up clanker',
+];
+let phrases = DEFAULT_PHRASES.slice();
+
+function phrasesFile() {
+  return path.join(app.getPath('userData'), 'phrases.json');
+}
+
+function loadPhrases() {
+  try {
+    const raw = fs.readFileSync(phrasesFile(), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.every(p => typeof p === 'string')) {
+      phrases = parsed;
+    }
+  } catch (_) {
+    // first run or bad file — keep defaults
+  }
+}
+
+function savePhrases(list) {
+  try {
+    fs.writeFileSync(phrasesFile(), JSON.stringify(list, null, 2), 'utf8');
+  } catch (e) {
+    console.warn('savePhrases failed:', e?.message || e);
+  }
+}
 
 const VK_CONTROL = 0x11;
 const VK_RETURN  = 0x0D;
@@ -170,6 +243,45 @@ function toggleOverlay() {
   }
 }
 
+// ── Config window ───────────────────────────────────────────────────────────
+function createConfigWindow() {
+  configWindow = new BrowserWindow({
+    width: 520,
+    height: 560,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    title: 'OpenWhip — Phrases',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload-config.js'),
+      contextIsolation: true,
+    },
+  });
+  configWindow.setMenuBarVisibility(false);
+  configWindow.loadFile('config.html');
+  configWindow.on('close', (e) => {
+    if (!app.isQuitting) {
+      e.preventDefault();
+      configWindow.hide();
+    }
+  });
+}
+
+function showConfigWindow() {
+  if (!configWindow) createConfigWindow();
+  configWindow.show();
+  configWindow.focus();
+}
+
+function handleTrayClick() {
+  // If the whip overlay is live, a tray click drops it and goes back to the editor.
+  if (overlay && overlay.isVisible()) {
+    overlay.webContents.send('drop-whip');
+  }
+  showConfigWindow();
+}
+
 // ── IPC ─────────────────────────────────────────────────────────────────────
 ipcMain.on('whip-crack', () => {
   try {
@@ -180,19 +292,51 @@ ipcMain.on('whip-crack', () => {
 });
 ipcMain.on('hide-overlay', () => { if (overlay) overlay.hide(); });
 
+ipcMain.handle('get-phrases', () => phrases);
+ipcMain.on('save-phrases', (_e, list) => {
+  if (Array.isArray(list) && list.every(p => typeof p === 'string')) {
+    phrases = list;
+    savePhrases(phrases);
+  }
+});
+function ensureMacAccessibility() {
+  if (process.platform !== 'darwin') return true;
+  // Passing `true` asks macOS to show the standard Accessibility prompt if
+  // the process isn't trusted yet. Returns the current trust state.
+  const trusted = systemPreferences.isTrustedAccessibilityClient(true);
+  if (trusted) return true;
+
+  const choice = dialog.showMessageBoxSync({
+    type: 'warning',
+    title: 'Accessibility required',
+    message: 'OpenWhip needs Accessibility access to type phrases.',
+    detail:
+      'macOS should have just opened a prompt. If not, open:\n\n' +
+      '  System Settings → Privacy & Security → Accessibility\n\n' +
+      'Enable the entry for Electron (or OpenWhip), then quit and relaunch this app.',
+    buttons: ['Open Accessibility Settings', 'Continue anyway'],
+    defaultId: 0,
+    cancelId: 1,
+  });
+  if (choice === 0) {
+    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+  }
+  return false;
+}
+
+ipcMain.on('start-whipping', () => {
+  if (!Array.isArray(phrases) || phrases.length === 0) return;
+  if (!ensureMacAccessibility()) return;
+  if (configWindow && configWindow.isVisible()) configWindow.hide();
+  if (overlay && overlay.isVisible()) return;
+  toggleOverlay();
+});
+
 // ── Macro: immediate Ctrl+C, type "Go FASER", Enter ───────────────────────
 function sendMacro() {
-  // Pick a random phrase from a list of similar phrases and type it out
-  const phrases = [
-    'FASTER',
-    'FASTER',
-    'FASTER',
-    'GO FASTER',
-    'Faster CLANKER',
-    'Work FASTER',
-    'Speed it up clanker',
-  ];
-  const chosen = phrases[Math.floor(Math.random() * phrases.length)];
+  // Pick a random phrase from the user's configured list (falls back to defaults)
+  const pool = (Array.isArray(phrases) && phrases.length > 0) ? phrases : DEFAULT_PHRASES;
+  const chosen = pool[Math.floor(Math.random() * pool.length)];
 
   if (process.platform === 'win32') {
     sendMacroWindows(chosen);
@@ -204,27 +348,60 @@ function sendMacro() {
 }
 
 function sendMacroWindows(text) {
-  if (!keybd_event || !VkKeyScanA) return;
-  const tapKey = vk => {
-    keybd_event(vk, 0, 0, 0);
-    keybd_event(vk, 0, KEYUP, 0);
-  };
-  const tapChar = ch => {
-    const packed = VkKeyScanA(ch.charCodeAt(0));
-    if (packed === -1) return;
-    const vk = packed & 0xff;
-    const shiftState = (packed >> 8) & 0xff;
-    if (shiftState & 1) keybd_event(0x10, 0, 0, 0); // Shift down
-    tapKey(vk);
-    if (shiftState & 1) keybd_event(0x10, 0, KEYUP, 0); // Shift up
-  };
+  if (!keybd_event) return;
 
-  // Ctrl+C (interrupt)
+  // Ctrl+C (interrupt) — virtual keys so TUIs receive it as a real signal.
   keybd_event(VK_CONTROL, 0, 0, 0);
   keybd_event(VK_C, 0, 0, 0);
   keybd_event(VK_C, 0, KEYUP, 0);
   keybd_event(VK_CONTROL, 0, KEYUP, 0);
-  for (const ch of text) tapChar(ch);
+
+  const KEYEVENTF_KEYUP = 0x0002;
+  const KEYEVENTF_UNICODE = 0x0004;
+  const INPUT_KEYBOARD = 1;
+
+  // Unicode path (for chars the current layout can't type directly).
+  // Windows TUIs often ignore WM_CHAR from KEYEVENTF_UNICODE, but GUI apps
+  // accept it, and we have no better option for non-layout chars.
+  const typeUnicode = (codeUnit) => {
+    if (!SendInput) return;
+    const mkKi = (flags) => ({
+      type: INPUT_KEYBOARD,
+      u: { ki: {
+        wVk: 0, wScan: codeUnit,
+        dwFlags: flags, time: 0, dwExtraInfo: 0,
+      } },
+    });
+    SendInput(1, [mkKi(KEYEVENTF_UNICODE)], INPUT_SIZE);
+    SendInput(1, [mkKi(KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)], INPUT_SIZE);
+  };
+
+  // VK path — the old, terminal-friendly route. Shift/Ctrl/Alt are honored
+  // per VkKeyScanW's shift-state byte.
+  const typeVk = (packed) => {
+    const vk = packed & 0xff;
+    const shift = (packed >> 8) & 0xff;
+    if (shift & 1) keybd_event(0x10, 0, 0, 0);           // Shift down
+    if (shift & 2) keybd_event(VK_CONTROL, 0, 0, 0);     // Ctrl down
+    if (shift & 4) keybd_event(VK_MENU, 0, 0, 0);        // Alt down
+    keybd_event(vk, 0, 0, 0);
+    keybd_event(vk, 0, KEYUP, 0);
+    if (shift & 4) keybd_event(VK_MENU, 0, KEYUP, 0);
+    if (shift & 2) keybd_event(VK_CONTROL, 0, KEYUP, 0);
+    if (shift & 1) keybd_event(0x10, 0, KEYUP, 0);
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    const packed = VkKeyScanW ? VkKeyScanW(code) : -1;
+    // -1 (0xFFFF as int16) or high byte 0xFF means "no single-key mapping".
+    if (packed !== -1 && packed !== 0xFFFF && ((packed >> 8) & 0xff) !== 0xff) {
+      typeVk(packed);
+    } else {
+      typeUnicode(code);
+    }
+  }
+
   keybd_event(VK_RETURN, 0, 0, 0);
   keybd_event(VK_RETURN, 0, KEYUP, 0);
 }
@@ -277,14 +454,18 @@ function sendMacroLinux(text) {
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
+  loadPhrases();
   tray = new Tray(await getTrayIcon());
-  tray.setToolTip('OpenWhip - click for whip');
+  tray.setToolTip('OpenWhip - click to configure');
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      { label: 'Quit', click: () => app.quit() },
+      { label: 'Configure phrases…', click: () => showConfigWindow() },
+      { type: 'separator' },
+      { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
     ])
   );
-  tray.on('click', toggleOverlay);
+  tray.on('click', handleTrayClick);
 });
 
+app.on('before-quit', () => { app.isQuitting = true; });
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray
