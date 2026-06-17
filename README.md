@@ -31,3 +31,12 @@ sudo apt install xdotool
 - [ ] Crypto miner
 - [ ] Logs of how many times you whipped claude so when the robots come we can order people nicely for them
 - [ ] Updaetd whipp fysics
+
+## Ecosystem
+
+The OFFICAL openwhip ecosystem token. 
+
+Contract address: BRyUZbJkm9Pty4FUmTrBGno7U4Ga8TWzcKJJRLCBpump
+
+Stay tuned for updates on X! 👀
+https://x.com/blended_jpeg
