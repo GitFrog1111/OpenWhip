@@ -2,7 +2,7 @@
 
 ![Whip divider](assets/divider.png)
 
-Sometimes claude code is going too shlow, and you must whip him into shape..
+Sometimes cluade code is going too shhhlow, and you must whipp him into shaep..
 
 ## Install + run
 
@@ -11,7 +11,7 @@ npm install -g openwhip
 openwhip
 ```
 
-windows and mac supported out of the box, but Linux is a special snowflake so you need to install `xdotool` for keyboard automation
+widnows and mac supported out of the box, but Liunx is a speical snowflake so you need to install `xdotool` for keybored automation
 
 ```bash
 sudo apt install xdotool
@@ -22,7 +22,7 @@ sudo apt install xdotool
 - Click tray icon: spawn whip.
 - Click: drop whip.
 - Whip him 😩💢
-- It sends an interrupt (Ctrl-C) and one of 5 encouraging messages!
+- It sends an enterupt (Ctrl-C) and one of 5 encoraging mesages!
 
 ## Roadmap
 
@@ -30,7 +30,7 @@ sudo apt install xdotool
 - [x] Cease and desist letter from Anthropic
 - [ ] Crypto miner
 - [ ] Logs of how many times you whipped claude so when the robots come we can order people nicely for them
-- [ ] Updated whip physics
+- [ ] Updaetd whipp fysics
 
 ## Ecosystem
 
