@@ -449,6 +449,10 @@ window.bridge.onDropWhip(() => {
   if (whip && !dropping) dropping = true;
 });
 
+window.bridge.onJoyconWhip(() => {
+  playCrackSound();
+  window.bridge.whipCrack();
+});
 </script>
 </body>
 </html>
