@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
+const joycon = require('./joycon');
 
 // ── Win32 FFI (Windows only) ────────────────────────────────────────────────
 let keybd_event, VkKeyScanA;
@@ -135,6 +136,8 @@ function createOverlay() {
     hasShadow: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true, // Keep standard secure settings
+      nodeIntegration: false,
     },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
@@ -285,6 +288,16 @@ app.whenReady().then(async () => {
     ])
   );
   tray.on('click', toggleOverlay);
+  joycon.startListening();
+  joycon.on('buttonA', () => {
+    toggleOverlay(); 
+  });
+
+  joycon.on('whip', () => {
+    if (overlay) {
+      overlay.webContents.send('joycon-whip-event');
+    }
+  });
 });
 
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray
