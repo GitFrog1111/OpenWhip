@@ -87,6 +87,22 @@ test('resolves platform overrides and falls back to default steps', () => {
   assert.deepEqual(resolveSteps(profile, 'linux'), [message()]);
 });
 
+test('normalizes letter keys to lowercase for every platform sequence', () => {
+  const [profile] = mergeProfiles(config([customProfile({
+    steps: {
+      default: [{ type: 'keystroke', key: 'A', modifiers: [] }, message()],
+      win32: [{ type: 'keystroke', key: 'B', modifiers: [] }, message()],
+      darwin: [{ type: 'keystroke', key: 'C', modifiers: ['control'] }, message()],
+      linux: [{ type: 'keystroke', key: 'D', modifiers: ['control'] }, message()],
+    },
+  })])).slice(-1);
+
+  assert.equal(resolveSteps(profile, 'freebsd')[0].key, 'a');
+  assert.equal(resolveSteps(profile, 'win32')[0].key, 'b');
+  assert.equal(resolveSteps(profile, 'darwin')[0].key, 'c');
+  assert.equal(resolveSteps(profile, 'linux')[0].key, 'd');
+});
+
 test('selects a message deterministically from the supplied random function', () => {
   const profile = customProfile({ messages: ['First', 'Second', 'Third'] });
 
