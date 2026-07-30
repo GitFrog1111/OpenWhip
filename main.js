@@ -229,12 +229,14 @@ function createProductionInputDriver() {
       const driver = createInputDriver(process.platform, {
         execFile,
         keybdEvent: keybd_event,
-        sendInput(count, events, size) {
-          return SendInput(count, events.map(event => ({
-            type: event.type,
-            u: { ki: event.ki },
-          })), size);
-        },
+        ...(typeof SendInput === 'function' ? {
+          sendInput(count, events, size) {
+            return SendInput(count, events.map(event => ({
+              type: event.type,
+              u: { ki: event.ki },
+            })), size);
+          },
+        } : {}),
         inputSize,
       });
       return driver.execute(steps, message);
