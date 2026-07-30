@@ -7,21 +7,21 @@ const {
 } = require('../lib/input-executor');
 
 const KEYUP = 0x0002;
+const UNICODE = 0x0004;
 
-test('Windows executes portable steps in order and types ASCII through VkKeyScanA', async () => {
+test('Windows executes portable steps in order and types messages through one Unicode SendInput batch', async () => {
   const calls = [];
-  const packedKeys = new Map([
-    ['A', 0x0141],
-    ['!', 0x0131],
-  ]);
   const driver = createInputDriver('win32', {
     keybdEvent(vk, scan, flags, extraInfo) {
       calls.push(['key', vk, scan, flags, extraInfo]);
     },
-    vkKeyScanA(code) {
-      const character = String.fromCharCode(code);
-      calls.push(['scan', character]);
-      return packedKeys.get(character) ?? -1;
+    sendInput(count, events, inputSize) {
+      calls.push(['sendInput', count, events, inputSize]);
+      return count;
+    },
+    inputSize: 40,
+    vkKeyScanA() {
+      return 0x41;
     },
     async sleep(ms) {
       calls.push(['sleep', ms]);
@@ -33,7 +33,7 @@ test('Windows executes portable steps in order and types ASCII through VkKeyScan
     { type: 'delay', ms: 25 },
     { type: 'message' },
     { type: 'keystroke', key: 'enter', modifiers: [] },
-  ], 'A!');
+  ], 'A B');
 
   assert.deepEqual(calls, [
     ['key', 0x11, 0, 0, 0],
@@ -41,18 +41,49 @@ test('Windows executes portable steps in order and types ASCII through VkKeyScan
     ['key', 0x43, 0, KEYUP, 0],
     ['key', 0x11, 0, KEYUP, 0],
     ['sleep', 25],
-    ['scan', 'A'],
-    ['key', 0x10, 0, 0, 0],
-    ['key', 0x41, 0, 0, 0],
-    ['key', 0x41, 0, KEYUP, 0],
-    ['key', 0x10, 0, KEYUP, 0],
-    ['scan', '!'],
-    ['key', 0x10, 0, 0, 0],
-    ['key', 0x31, 0, 0, 0],
-    ['key', 0x31, 0, KEYUP, 0],
-    ['key', 0x10, 0, KEYUP, 0],
+    ['sendInput', 6, [
+      { type: 1, ki: { wVk: 0, wScan: 0x0041, dwFlags: UNICODE, time: 0, dwExtraInfo: 0 } },
+      { type: 1, ki: { wVk: 0, wScan: 0x0041, dwFlags: UNICODE | KEYUP, time: 0, dwExtraInfo: 0 } },
+      { type: 1, ki: { wVk: 0, wScan: 0x0020, dwFlags: UNICODE, time: 0, dwExtraInfo: 0 } },
+      { type: 1, ki: { wVk: 0, wScan: 0x0020, dwFlags: UNICODE | KEYUP, time: 0, dwExtraInfo: 0 } },
+      { type: 1, ki: { wVk: 0, wScan: 0x0042, dwFlags: UNICODE, time: 0, dwExtraInfo: 0 } },
+      { type: 1, ki: { wVk: 0, wScan: 0x0042, dwFlags: UNICODE | KEYUP, time: 0, dwExtraInfo: 0 } },
+    ], 40],
     ['key', 0x0d, 0, 0, 0],
     ['key', 0x0d, 0, KEYUP, 0],
+  ]);
+});
+
+test('Windows rejects a partial Unicode SendInput batch before Enter', async () => {
+  const calls = [];
+  const driver = createInputDriver('win32', {
+    keybdEvent(vk, scan, flags, extraInfo) {
+      calls.push(['key', vk, scan, flags, extraInfo]);
+    },
+    sendInput(count, events, inputSize) {
+      calls.push(['sendInput', count, events, inputSize]);
+      return count - 1;
+    },
+    inputSize: 40,
+    vkKeyScanA() {
+      return 0x41;
+    },
+    sleep: async () => {},
+  });
+
+  await assert.rejects(
+    driver.execute([
+      { type: 'message' },
+      { type: 'keystroke', key: 'enter', modifiers: [] },
+    ], 'A'),
+    /SendInput.*insert.*requested|insert.*requested.*SendInput/i,
+  );
+
+  assert.deepEqual(calls, [
+    ['sendInput', 2, [
+      { type: 1, ki: { wVk: 0, wScan: 0x0041, dwFlags: UNICODE, time: 0, dwExtraInfo: 0 } },
+      { type: 1, ki: { wVk: 0, wScan: 0x0041, dwFlags: UNICODE | KEYUP, time: 0, dwExtraInfo: 0 } },
+    ], 40],
   ]);
 });
 
