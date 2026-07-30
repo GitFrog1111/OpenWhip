@@ -1,30 +1,68 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  Tray,
+  Menu,
+  ipcMain,
+  nativeImage,
+  screen,
+  shell,
+  dialog,
+} = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
+const { createInputDriver } = require('./lib/input-executor');
+const { createAgentRuntime, createTrayMenuTemplate } = require('./lib/agent-runtime');
 
 // ── Win32 FFI (Windows only) ────────────────────────────────────────────────
-let keybd_event, VkKeyScanA;
+let keybd_event, SendInput, inputSize;
 if (process.platform === 'win32') {
   try {
     const koffi = require('koffi');
     const user32 = koffi.load('user32.dll');
+    const MOUSEINPUT = koffi.struct('MOUSEINPUT', {
+      dx: 'long',
+      dy: 'long',
+      mouseData: 'uint32_t',
+      dwFlags: 'uint32_t',
+      time: 'uint32_t',
+      dwExtraInfo: 'uintptr_t',
+    });
+    const KEYBDINPUT = koffi.struct('KEYBDINPUT', {
+      wVk: 'uint16_t',
+      wScan: 'uint16_t',
+      dwFlags: 'uint32_t',
+      time: 'uint32_t',
+      dwExtraInfo: 'uintptr_t',
+    });
+    const HARDWAREINPUT = koffi.struct('HARDWAREINPUT', {
+      uMsg: 'uint32_t',
+      wParamL: 'uint16_t',
+      wParamH: 'uint16_t',
+    });
+    const INPUT = koffi.struct('INPUT', {
+      type: 'uint32_t',
+      u: koffi.union({
+        mi: MOUSEINPUT,
+        ki: KEYBDINPUT,
+        hi: HARDWAREINPUT,
+      }),
+    });
     keybd_event = user32.func('void __stdcall keybd_event(uint8_t bVk, uint8_t bScan, uint32_t dwFlags, uintptr_t dwExtraInfo)');
-    VkKeyScanA = user32.func('int16_t __stdcall VkKeyScanA(int ch)');
+    SendInput = user32.func('unsigned int __stdcall SendInput(unsigned int cInputs, INPUT *pInputs, int cbSize)');
+    inputSize = koffi.sizeof(INPUT);
   } catch (e) {
     console.warn('koffi not available – macro sending disabled', e.message);
   }
 }
 
 // ── Globals ─────────────────────────────────────────────────────────────────
-let tray, overlay;
+let tray, overlay, agentRuntime;
 let overlayReady = false;
 let spawnQueued = false;
 
-const VK_CONTROL = 0x11;
-const VK_RETURN  = 0x0D;
-const VK_C       = 0x43;
 const VK_MENU    = 0x12; // Alt
 const VK_TAB     = 0x09;
 const KEYUP      = 0x0002;
@@ -172,118 +210,97 @@ function toggleOverlay() {
 
 // ── IPC ─────────────────────────────────────────────────────────────────────
 ipcMain.on('whip-crack', () => {
-  try {
-    sendMacro();
-  } catch (err) {
-    console.warn('sendMacro failed:', err?.message || err);
-  }
+  void executeActiveProfile().catch(error => {
+    showError('Whip action failed', error);
+  });
 });
 ipcMain.on('hide-overlay', () => { if (overlay) overlay.hide(); });
 
-// ── Macro: immediate Ctrl+C, type "Go FASER", Enter ───────────────────────
-function sendMacro() {
-  // Pick a random phrase from a list of similar phrases and type it out
-  const phrases = [
-    'FASTER',
-    'FASTER',
-    'FASTER',
-    'GO FASTER',
-    'Faster CLANKER',
-    'Work FASTER',
-    'Speed it up clanker',
-  ];
-  const chosen = phrases[Math.floor(Math.random() * phrases.length)];
-
-  if (process.platform === 'win32') {
-    sendMacroWindows(chosen);
-  } else if (process.platform === 'darwin') {
-    sendMacroMac(chosen);
-  } else if (process.platform === 'linux') {
-    sendMacroLinux(chosen);
-  }
+// ── Agent profile execution ─────────────────────────────────────────────────
+function showError(title, error) {
+  const message = error?.message || String(error);
+  console.warn(`${title}:`, message);
+  if (app.isReady()) dialog.showErrorBox(title, message);
 }
 
-function sendMacroWindows(text) {
-  if (!keybd_event || !VkKeyScanA) return;
-  const tapKey = vk => {
-    keybd_event(vk, 0, 0, 0);
-    keybd_event(vk, 0, KEYUP, 0);
-  };
-  const tapChar = ch => {
-    const packed = VkKeyScanA(ch.charCodeAt(0));
-    if (packed === -1) return;
-    const vk = packed & 0xff;
-    const shiftState = (packed >> 8) & 0xff;
-    if (shiftState & 1) keybd_event(0x10, 0, 0, 0); // Shift down
-    tapKey(vk);
-    if (shiftState & 1) keybd_event(0x10, 0, KEYUP, 0); // Shift up
-  };
-
-  // Ctrl+C (interrupt)
-  keybd_event(VK_CONTROL, 0, 0, 0);
-  keybd_event(VK_C, 0, 0, 0);
-  keybd_event(VK_C, 0, KEYUP, 0);
-  keybd_event(VK_CONTROL, 0, KEYUP, 0);
-  for (const ch of text) tapChar(ch);
-  keybd_event(VK_RETURN, 0, 0, 0);
-  keybd_event(VK_RETURN, 0, KEYUP, 0);
-}
-
-function sendMacroMac(text) {
-  const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const interruptScript = [
-    'tell application "System Events"',
-    '  key code 8 using {control down}', // Ctrl+C interrupt
-    'end tell'
-  ].join('\n');
-  const typeAndEnterScript = [
-    'tell application "System Events"',
-    `  keystroke "${escaped}"`,
-    '  key code 36', // Enter
-    'end tell'
-  ].join('\n');
-
-  execFile('osascript', ['-e', interruptScript], err => {
-    if (err) {
-      console.warn('mac macro failed (enable Accessibility for terminal/app):', err.message);
-      return;
-    }
-
-    setTimeout(() => {
-      execFile('osascript', ['-e', typeAndEnterScript], err2 => {
-        if (err2) {
-          console.warn('mac macro failed (enable Accessibility for terminal/app):', err2.message);
-        }
+function createProductionInputDriver() {
+  return {
+    execute(steps, message) {
+      const driver = createInputDriver(process.platform, {
+        execFile,
+        keybdEvent: keybd_event,
+        ...(typeof SendInput === 'function' ? {
+          sendInput(count, events, size) {
+            return SendInput(count, events.map(event => ({
+              type: event.type,
+              u: { ki: event.ki },
+            })), size);
+          },
+        } : {}),
+        inputSize,
       });
-    }, 300);
-  });
+      return driver.execute(steps, message);
+    },
+  };
 }
 
-function sendMacroLinux(text) {
-  execFile(
-    'xdotool',
-    [
-      'key', '--clearmodifiers', 'ctrl+c',
-      'type', '--delay', '1', '--clearmodifiers', '--', text,
-      'key', 'Return',
-    ],
-    err => {
-      if (err) {
-        console.warn('linux macro failed. Install xdotool:', err.message);
-      }
-    }
-  );
+async function executeActiveProfile() {
+  if (!agentRuntime) throw new Error('Agent profiles are not ready');
+  await agentRuntime.executeActiveProfile();
+}
+
+function runMenuAction(title, action, rebuildAfterward = false) {
+  void Promise.resolve()
+    .then(action)
+    .then(() => {
+      if (rebuildAfterward) rebuildTrayMenu();
+    })
+    .catch(error => {
+      showError(title, error);
+      if (rebuildAfterward) rebuildTrayMenu();
+    });
+}
+
+function rebuildTrayMenu() {
+  if (!tray || !agentRuntime) return;
+  const template = createTrayMenuTemplate(agentRuntime, {
+    selectProfile(profileId) {
+      runMenuAction(
+        'Unable to select target agent',
+        () => agentRuntime.selectProfile(profileId),
+        true,
+      );
+    },
+    openProfileConfig() {
+      runMenuAction('Unable to open profile config', () => agentRuntime.openProfileConfig());
+    },
+    reloadProfiles() {
+      runMenuAction('Unable to reload profiles', () => agentRuntime.reloadProfiles(), true);
+    },
+    quit() {
+      app.quit();
+    },
+  });
+  tray.setContextMenu(Menu.buildFromTemplate(template));
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
+  agentRuntime = createAgentRuntime({
+    userDataPath: app.getPath('userData'),
+    platform: process.platform,
+    driver: createProductionInputDriver(),
+    openPath: filePath => shell.openPath(filePath),
+  });
+  try {
+    await agentRuntime.initialize();
+  } catch (error) {
+    showError('Unable to load agent profiles', error);
+  }
+
   tray = new Tray(await getTrayIcon());
   tray.setToolTip('OpenWhip - click for whip');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Quit', click: () => app.quit() },
-    ])
-  );
+  rebuildTrayMenu();
   tray.on('click', toggleOverlay);
 });
 
