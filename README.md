@@ -17,6 +17,8 @@ Windows and macOS work out of the box. On Linux, install `xdotool` for keyboard 
 sudo apt install xdotool
 ```
 
+On Windows, message input does not require switching to an English keyboard layout.
+
 ## Controls
 
 - Click the tray icon to spawn the whip.
