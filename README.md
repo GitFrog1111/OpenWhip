@@ -32,7 +32,7 @@ The built-in profiles use the same profile and input-execution path:
 - **Claude Code**: Windows and Linux send `Ctrl+C`, a message, then `Enter`. macOS preserves the existing behavior: `Ctrl+C`, a 300 ms delay, a message, then `Enter`.
 - **Codex**: sends a message, then `Enter` on every platform. This one profile is intended for both CLI and Desktop use; OpenWhip does not distinguish or automatically route between them.
 
-The selected profile is persisted in Electron's user-data directory. If that state is missing, damaged, or names a profile that no longer exists, OpenWhip falls back to Claude Code.
+The selected profile is persisted as `{ "activeProfileId": "..." }` in `<Electron userData>/agent-profile-state.json`. If that state is missing, damaged, or names a profile that no longer exists, OpenWhip falls back to Claude Code.
 
 ## Custom profiles
 
