@@ -2,7 +2,7 @@
 
 ![Whip divider](assets/divider.png)
 
-Sometimes claude code is going too shlow, and you must whip him into shape..
+Sometimes claude code is going too slow, and you must whip him into shape..
 
 ## Install + run
 
