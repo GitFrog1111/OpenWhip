@@ -86,6 +86,10 @@ test('Windows maps portable modifiers and releases them in reverse order', async
 
 test('Windows rejects missing injection functions and unmappable ASCII', async () => {
   assert.throws(
+    () => createInputDriver('win32', { vkKeyScanA() {} }),
+    /keybdEvent/i,
+  );
+  assert.throws(
     () => createInputDriver('win32', { keybdEvent() {} }),
     /vkKeyScanA/i,
   );
