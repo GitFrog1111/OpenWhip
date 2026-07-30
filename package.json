@@ -36,6 +36,7 @@
     "overlay.html",
     "sounds",
     "icon",
+    "lib",
     "bin/openwhip.js",
     "bin/badclaude.js",
     "README.md"
@@ -43,7 +44,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "pack": "npm pack"
+    "pack": "npm pack",
+    "test": "node --test"
   },
   "dependencies": {
     "electron": "^33.0.0",
