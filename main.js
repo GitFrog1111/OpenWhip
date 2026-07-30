@@ -17,13 +17,42 @@ const { createInputDriver } = require('./lib/input-executor');
 const { createAgentRuntime, createTrayMenuTemplate } = require('./lib/agent-runtime');
 
 // ── Win32 FFI (Windows only) ────────────────────────────────────────────────
-let keybd_event, VkKeyScanA;
+let keybd_event, SendInput, inputSize;
 if (process.platform === 'win32') {
   try {
     const koffi = require('koffi');
     const user32 = koffi.load('user32.dll');
+    const MOUSEINPUT = koffi.struct('MOUSEINPUT', {
+      dx: 'long',
+      dy: 'long',
+      mouseData: 'uint32_t',
+      dwFlags: 'uint32_t',
+      time: 'uint32_t',
+      dwExtraInfo: 'uintptr_t',
+    });
+    const KEYBDINPUT = koffi.struct('KEYBDINPUT', {
+      wVk: 'uint16_t',
+      wScan: 'uint16_t',
+      dwFlags: 'uint32_t',
+      time: 'uint32_t',
+      dwExtraInfo: 'uintptr_t',
+    });
+    const HARDWAREINPUT = koffi.struct('HARDWAREINPUT', {
+      uMsg: 'uint32_t',
+      wParamL: 'uint16_t',
+      wParamH: 'uint16_t',
+    });
+    const INPUT = koffi.struct('INPUT', {
+      type: 'uint32_t',
+      u: koffi.union({
+        mi: MOUSEINPUT,
+        ki: KEYBDINPUT,
+        hi: HARDWAREINPUT,
+      }),
+    });
     keybd_event = user32.func('void __stdcall keybd_event(uint8_t bVk, uint8_t bScan, uint32_t dwFlags, uintptr_t dwExtraInfo)');
-    VkKeyScanA = user32.func('int16_t __stdcall VkKeyScanA(int ch)');
+    SendInput = user32.func('unsigned int __stdcall SendInput(unsigned int cInputs, INPUT *pInputs, int cbSize)');
+    inputSize = koffi.sizeof(INPUT);
   } catch (e) {
     console.warn('koffi not available – macro sending disabled', e.message);
   }
@@ -200,7 +229,13 @@ function createProductionInputDriver() {
       const driver = createInputDriver(process.platform, {
         execFile,
         keybdEvent: keybd_event,
-        vkKeyScanA: VkKeyScanA,
+        sendInput(count, events, size) {
+          return SendInput(count, events.map(event => ({
+            type: event.type,
+            u: { ki: event.ki },
+          })), size);
+        },
+        inputSize,
       });
       return driver.execute(steps, message);
     },

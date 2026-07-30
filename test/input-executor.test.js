@@ -20,9 +20,6 @@ test('Windows executes portable steps in order and types messages through one Un
       return count;
     },
     inputSize: 40,
-    vkKeyScanA() {
-      return 0x41;
-    },
     async sleep(ms) {
       calls.push(['sleep', ms]);
     },
@@ -65,9 +62,6 @@ test('Windows rejects a partial Unicode SendInput batch before Enter', async () 
       return count - 1;
     },
     inputSize: 40,
-    vkKeyScanA() {
-      return 0x41;
-    },
     sleep: async () => {},
   });
 
@@ -93,9 +87,8 @@ test('Windows maps portable modifiers and releases them in reverse order', async
     keybdEvent(vk, scan, flags) {
       calls.push([vk, flags]);
     },
-    vkKeyScanA() {
-      return 0x41;
-    },
+    sendInput() {},
+    inputSize: 40,
     sleep: async () => {},
   });
 
@@ -115,24 +108,18 @@ test('Windows maps portable modifiers and releases them in reverse order', async
   ]);
 });
 
-test('Windows rejects missing injection functions and unmappable ASCII', async () => {
+test('Windows rejects missing injection functions and invalid input size', () => {
   assert.throws(
-    () => createInputDriver('win32', { vkKeyScanA() {} }),
+    () => createInputDriver('win32', { sendInput() {}, inputSize: 40 }),
     /keybdEvent/i,
   );
   assert.throws(
-    () => createInputDriver('win32', { keybdEvent() {} }),
-    /vkKeyScanA/i,
+    () => createInputDriver('win32', { keybdEvent() {}, inputSize: 40 }),
+    /sendInput/i,
   );
-
-  const driver = createInputDriver('win32', {
-    keybdEvent() {},
-    vkKeyScanA() { return -1; },
-    sleep: async () => {},
-  });
-  await assert.rejects(
-    driver.execute([{ type: 'message' }], 'A'),
-    /map ASCII character/i,
+  assert.throws(
+    () => createInputDriver('win32', { keybdEvent() {}, sendInput() {} }),
+    /inputSize/i,
   );
 });
 
