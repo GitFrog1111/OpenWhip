@@ -105,10 +105,30 @@ test('merges valid custom profiles after built-ins without mutating inputs', () 
   assert.notEqual(profiles[2], supplied.profiles[0]);
 });
 
+test('rejects an invalid later profile atomically without mutating input or retaining partial state', () => {
+  const supplied = config([
+    customProfile({ id: 'first-valid' }),
+    customProfile({ id: 'later-invalid', messages: [] }),
+  ]);
+  const before = structuredClone(supplied);
+
+  assert.throws(() => mergeProfiles(supplied), /messages/i);
+  assert.deepEqual(supplied, before);
+
+  const retried = mergeProfiles(config([customProfile({ id: 'first-valid' })]));
+  assert.deepEqual(retried.map(profile => profile.id), [
+    'claude-code',
+    'codex',
+    'first-valid',
+  ]);
+});
+
 test('rejects invalid top-level configuration, custom count, IDs, labels, and duplicate IDs', () => {
+  assert.throws(() => mergeProfiles(null), /config/i);
   assert.throws(() => mergeProfiles({ version: 2, profiles: [] }), /version/i);
   assert.throws(() => mergeProfiles({ version: 1, profiles: 'not-an-array' }), /profiles/i);
   assert.throws(() => mergeProfiles(config(Array.from({ length: 51 }, (_, index) => customProfile({ id: `neutral-${index}` })))), /50/i);
+  assert.throws(() => mergeProfiles(config([null])), /profile/i);
   assert.throws(() => mergeProfiles(config([customProfile({ id: '' })])), /id/i);
   assert.throws(() => mergeProfiles(config([customProfile({ id: 'x'.repeat(65) })])), /id/i);
   assert.throws(() => mergeProfiles(config([customProfile({ label: '' })])), /label/i);
@@ -118,16 +138,20 @@ test('rejects invalid top-level configuration, custom count, IDs, labels, and du
 });
 
 test('rejects invalid message collections and message text', () => {
+  assert.throws(() => mergeProfiles(config([customProfile({ messages: 'Keep going' })])), /messages/i);
   assert.throws(() => mergeProfiles(config([customProfile({ messages: [] })])), /messages/i);
   assert.throws(() => mergeProfiles(config([customProfile({ messages: Array(21).fill('Keep going') })])), /messages/i);
+  assert.throws(() => mergeProfiles(config([customProfile({ messages: [42] })])), /message/i);
   assert.throws(() => mergeProfiles(config([customProfile({ messages: [''] })])), /message/i);
   assert.throws(() => mergeProfiles(config([customProfile({ messages: ['x'.repeat(501)] })])), /message/i);
   assert.throws(() => mergeProfiles(config([customProfile({ messages: ['Keep going \u2713'] })])), /ASCII/i);
 });
 
 test('rejects missing or invalid platform step sequences', () => {
+  assert.throws(() => mergeProfiles(config([customProfile({ steps: null })])), /steps/i);
   assert.throws(() => mergeProfiles(config([customProfile({ steps: {} })])), /default/i);
   assert.throws(() => mergeProfiles(config([customProfile({ steps: { default: [] } })])), /steps/i);
+  assert.throws(() => mergeProfiles(config([customProfile({ steps: { default: [null] } })])), /step/i);
   assert.throws(() => mergeProfiles(config([customProfile({ steps: { default: Array(17).fill(message()) } })])), /steps/i);
   assert.throws(() => mergeProfiles(config([customProfile({ steps: { default: [{ type: 'delay', ms: 1 }] } })])), /exactly one message/i);
   assert.throws(() => mergeProfiles(config([customProfile({ steps: { default: [message(), message()] } })])), /exactly one message/i);
@@ -141,11 +165,14 @@ test('rejects invalid keystroke, delay, and step fields', () => {
   );
 
   invalid({ type: 'keystroke', key: 'f1', modifiers: [] }, /key/i);
+  invalid({ type: 'keystroke', key: 'a', modifiers: 'control' }, /modifier/i);
   invalid({ type: 'keystroke', key: 'a', modifiers: ['control', 'control'] }, /modifier/i);
   invalid({ type: 'keystroke', key: 'a', modifiers: ['super'] }, /modifier/i);
   invalid({ type: 'delay', ms: 1.5 }, /delay/i);
   invalid({ type: 'delay', ms: -1 }, /delay/i);
   invalid({ type: 'delay', ms: 2001 }, /delay/i);
   invalid({ type: 'keystroke', key: 'a', modifiers: [], command: 'run this' }, /unknown/i);
+  invalid({ type: 'message', command: 'run this' }, /unknown/i);
+  invalid({ type: 'delay', ms: 1, command: 'run this' }, /unknown/i);
   invalid({ type: 'shell', command: 'run this' }, /unknown|type/i);
 });
