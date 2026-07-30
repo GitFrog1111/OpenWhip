@@ -222,6 +222,147 @@ test('state writes use a temporary file and rename, and selection stays unchange
   assert.equal(runtime.getActiveProfileId(), 'claude-code');
 });
 
+test('concurrent state writes in the same millisecond use distinct temporary files', async () => {
+  const originalNow = Date.now;
+  const temporaryFiles = new Map();
+  const writtenPaths = [];
+  let writeCount = 0;
+  let releaseWrites;
+  const bothWritesStarted = new Promise(resolve => { releaseWrites = resolve; });
+  const fileSystem = {
+    async writeFile(filePath, contents) {
+      writtenPaths.push(filePath);
+      temporaryFiles.set(filePath, contents);
+      writeCount += 1;
+      if (writeCount === 2) releaseWrites();
+      await bothWritesStarted;
+    },
+    async rename(from) {
+      if (!temporaryFiles.has(from)) {
+        const error = new Error(`missing temporary file: ${from}`);
+        error.code = 'ENOENT';
+        throw error;
+      }
+      temporaryFiles.delete(from);
+    },
+  };
+
+  Date.now = () => 123456789;
+  try {
+    await Promise.all([
+      writeActiveProfileState(fileSystem, 'C:/user-data/state.json', 'codex'),
+      writeActiveProfileState(fileSystem, 'C:/user-data/state.json', 'claude-code'),
+    ]);
+  } finally {
+    Date.now = originalNow;
+  }
+
+  assert.equal(new Set(writtenPaths).size, 2);
+});
+
+test('overlapping selections persist and publish state in invocation order', async () => {
+  const originalNow = Date.now;
+  let now = 1000;
+  const files = new Map();
+  let stateWriteCount = 0;
+  let releaseFirstWrite;
+  const firstWriteGate = new Promise(resolve => { releaseFirstWrite = resolve; });
+  const fileSystem = {
+    async readFile(filePath) {
+      if (files.has(filePath)) return files.get(filePath);
+      const error = new Error(`missing file: ${filePath}`);
+      error.code = 'ENOENT';
+      throw error;
+    },
+    async writeFile(filePath, contents) {
+      files.set(filePath, contents);
+      stateWriteCount += 1;
+      if (stateWriteCount === 1) await firstWriteGate;
+    },
+    async rename(from, to) {
+      if (!files.has(from)) {
+        const error = new Error(`missing temporary file: ${from}`);
+        error.code = 'ENOENT';
+        throw error;
+      }
+      files.set(to, files.get(from));
+      files.delete(from);
+    },
+  };
+  const userDataPath = 'C:/user-data';
+  const runtime = createAgentRuntime({
+    userDataPath,
+    platform: 'win32',
+    driver: { async execute() {} },
+    fileSystem,
+  });
+  await runtime.initialize();
+
+  Date.now = () => now++;
+  try {
+    const first = runtime.selectProfile('codex');
+    const second = runtime.selectProfile('claude-code');
+    await new Promise(resolve => setImmediate(resolve));
+    releaseFirstWrite();
+    await Promise.all([first, second]);
+  } finally {
+    Date.now = originalNow;
+  }
+
+  assert.equal(runtime.getActiveProfileId(), 'claude-code');
+  assert.deepEqual(
+    JSON.parse(files.get(path.join(userDataPath, STATE_FILENAME))),
+    { activeProfileId: 'claude-code' },
+  );
+});
+
+test('reload orders later validation and a failed queued selection does not block recovery', async t => {
+  const userDataPath = await makeUserData(t);
+  const configPath = path.join(userDataPath, CONFIG_FILENAME);
+  await fs.writeFile(configPath, JSON.stringify(customConfig()));
+
+  let blockConfigRead = false;
+  let announceBlockedRead;
+  let releaseBlockedRead;
+  const blockedReadStarted = new Promise(resolve => { announceBlockedRead = resolve; });
+  const blockedReadGate = new Promise(resolve => { releaseBlockedRead = resolve; });
+  const fileSystem = {
+    ...fs,
+    async readFile(filePath, encoding) {
+      if (blockConfigRead && filePath === configPath) {
+        announceBlockedRead();
+        await blockedReadGate;
+      }
+      return fs.readFile(filePath, encoding);
+    },
+  };
+  const runtime = createAgentRuntime({
+    userDataPath,
+    platform: 'win32',
+    driver: { async execute() {} },
+    fileSystem,
+  });
+  await runtime.initialize();
+  await runtime.selectProfile('custom-agent');
+  await fs.writeFile(configPath, JSON.stringify({ version: 1, profiles: [] }));
+
+  blockConfigRead = true;
+  const reload = runtime.reloadProfiles();
+  await blockedReadStarted;
+  const staleSelection = runtime.selectProfile('custom-agent');
+  releaseBlockedRead();
+
+  await reload;
+  await assert.rejects(staleSelection, /Unknown agent profile: custom-agent/);
+  await runtime.selectProfile('codex');
+
+  assert.equal(runtime.getActiveProfileId(), 'codex');
+  assert.deepEqual(
+    JSON.parse(await fs.readFile(path.join(userDataPath, STATE_FILENAME), 'utf8')),
+    { activeProfileId: 'codex' },
+  );
+});
+
 test('tray menu is built dynamically with radio profiles and management actions', async t => {
   const userDataPath = await makeUserData(t);
   await fs.writeFile(path.join(userDataPath, CONFIG_FILENAME), JSON.stringify(customConfig()));

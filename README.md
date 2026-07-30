@@ -92,7 +92,7 @@ The full configuration shape is:
 
 Supported actions are deliberately limited to keyboard input:
 
-- `keystroke` has a `key` and a `modifiers` array. A key is one ASCII letter or number, or `enter`, `escape`, `tab`, `space`, `backspace`, `up`, `down`, `left`, or `right`. Modifiers may be `control`, `alt`, `shift`, and `meta`.
+- `keystroke` has a `key` and a `modifiers` array. A key is one ASCII letter or number, or `enter`, `escape`, `tab`, `space`, `backspace`, `up`, `down`, `left`, or `right`. Modifiers may be `control`, `alt`, `shift`, and `meta`; each modifier may appear at most once.
 - `message` inserts the selected message. Every sequence must contain exactly one `message` action.
 - `delay` waits for an integer number of milliseconds from 0 through 2000.
 
