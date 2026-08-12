@@ -49,9 +49,15 @@ const P = {
   wallFriction:    0.86,   // tangential damping on wall hit
 
   // Crack detection
-  crackSpeed:     340,     // tip velocity threshold to trigger crack
+  crackSpeed:     340,     // tip velocity threshold to trigger crack (px per simulation step)
   crackCooldownMs:200,   // min ms between cracks
   firstCrackGraceMs: 350, // no crack (macro) until this long after spawn
+
+  // Simulation timing. Every constant above is tuned for a 60Hz step, so the
+  // loop runs a fixed step and decouples the physics from the display refresh rate.
+  stepMs:         1000 / 60, // fixed simulation step
+  maxStepsPerFrame: 5,       // spiral-of-death guard when frames are slow
+  dropTimeoutMs:  4000,      // hard limit on the drop animation before force-hiding
 
   // Visuals
   lineWidthHandle: 7,      // rope thickness near handle
@@ -80,17 +86,42 @@ let mouseX = 0, mouseY = 0;
 let prevMouseX = 0, prevMouseY = 0;
 let whip = null;
 let dropping = false;
+let dropStartTime = 0;
 let lastCrackTime = 0;
 let whipSpawnTime = 0;
 let handleAngle = P.baseTargetAngle;
 let handleAngVel = 0;
+let rafId = null;
+let lastFrameTime = 0;
+let stepAccumulator = 0;
 
 const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
 
+/** Drop the whip on the floor; it despawns once it falls off screen. */
+function beginDrop() {
+  if (!whip || dropping) return;
+  dropping = true;
+  dropStartTime = Date.now();
+}
+
+/** Escape hatch: clear the whip and hand the screen back immediately. */
+function dismissOverlay() {
+  whip = null;
+  dropping = false;
+  // Cancel explicitly: a hidden window never fires its pending frame, so rafId would
+  // stay set and the next startLoop() would skip resetting lastFrameTime, making the
+  // stale frame run a whole batch of steps at once.
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  stepAccumulator = 0;
+  ctx.clearRect(0, 0, W, H);
+  window.bridge.hideOverlay();
+}
+
 document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
-document.addEventListener('mousedown', () => {
-  if (whip && !dropping) dropping = true;
-});
+document.addEventListener('mousedown', beginDrop);
 
 // ── Whip creation ───────────────────────────────────────────────────────────
 function spawnWhip(mx, my) {
@@ -160,6 +191,8 @@ const wrapPi = a => {
   return a;
 };
 
+// A fresh element per crack on purpose: reusing one would restart the clip instead of
+// letting rapid cracks overlap.
 function playCrackSound() {
   if (!WHIP_CRACK_SOUNDS.length) return;
   const src = WHIP_CRACK_SOUNDS[Math.floor(Math.random() * WHIP_CRACK_SOUNDS.length)];
@@ -366,11 +399,11 @@ function update() {
     }
   }
 
-  // If dropping, check if everything fell off screen
-  if (dropping && whip.every(p => p.y > H + 60)) {
-    whip = null;
-    dropping = false;
-    window.bridge.hideOverlay();
+  // If dropping, check if everything fell off screen. The timeout is a failsafe:
+  // getting the screen back must never depend on the simulation converging.
+  if (dropping && (whip.every(p => p.y > H + 60) || Date.now() - dropStartTime > P.dropTimeoutMs)) {
+    dismissOverlay();
+    return;
   }
   prevMouseX = mouseX;
   prevMouseY = mouseY;
@@ -428,12 +461,41 @@ function draw() {
 }
 
 // ── Main loop ───────────────────────────────────────────────────────────────
-function loop() {
-  update();
+// Fixed-step accumulator: physics always advances in P.stepMs slices regardless of
+// display refresh rate. Before this, a 120Hz screen ran the whole simulation twice as
+// fast in wall-clock time and made cracks harder to trigger, because crackSpeed is a
+// per-step distance and each frame covered half the movement.
+function loop(now) {
+  const frameMs = clamp(now - lastFrameTime, 0, P.stepMs * P.maxStepsPerFrame);
+  lastFrameTime = now;
+  stepAccumulator += frameMs;
+
+  let steps = 0;
+  while (stepAccumulator >= P.stepMs && steps < P.maxStepsPerFrame) {
+    update();
+    stepAccumulator -= P.stepMs;
+    steps++;
+    if (!whip) break; // dismissed mid-step
+  }
+
   draw();
-  requestAnimationFrame(loop);
+
+  if (whip) {
+    rafId = requestAnimationFrame(loop);
+  } else {
+    // Nothing to simulate: park the loop instead of clearing a full-screen canvas forever.
+    rafId = null;
+    stepAccumulator = 0;
+  }
 }
-loop();
+
+/** (Re)start the render loop, discarding time spent while it was parked. */
+function startLoop() {
+  if (rafId !== null) return;
+  lastFrameTime = performance.now();
+  stepAccumulator = 0;
+  rafId = requestAnimationFrame(loop);
+}
 
 // ── IPC from main process ───────────────────────────────────────────────────
 window.bridge.onSpawnWhip(() => {
@@ -443,11 +505,11 @@ window.bridge.onSpawnWhip(() => {
   prevMouseY = mouseY;
   handleAngle = P.baseTargetAngle;
   handleAngVel = 0;
+  startLoop();
 });
 
-window.bridge.onDropWhip(() => {
-  if (whip && !dropping) dropping = true;
-});
+window.bridge.onDropWhip(beginDrop);
+window.bridge.onDismiss(dismissOverlay);
 
 </script>
 </body>
