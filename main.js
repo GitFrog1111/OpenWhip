@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -29,38 +29,101 @@ const VK_MENU    = 0x12; // Alt
 const VK_TAB     = 0x09;
 const KEYUP      = 0x0002;
 
-/** One Alt+Tab / Cmd+Tab so focus returns to the previously active app after tray click. */
-function refocusPreviousApp() {
+// ── Focus handling ──────────────────────────────────────────────────────────
+// The macro types into whatever window is focused, so aiming it matters: Alt/Cmd+Tab
+// means "the last app", which stops being the right target the moment you touched
+// anything else in between, and the phrase lands somewhere it should not. Capture what
+// was actually in front when the whip was summoned and restore that instead. Windows
+// keeps the tab switch, since Win32 refuses SetForegroundWindow from a background
+// process, so restoring an HWND there would silently do nothing.
+let previousAppPromise = Promise.resolve(null);
+
+const OWN_PROCESS_NAMES = new Set(['electron', 'openwhip']);
+
+function escapeAppleScriptString(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/** Snapshot the frontmost window so refocusPreviousApp() can put focus back on it. */
+function capturePreviousApp() {
+  previousAppPromise = new Promise(resolve => {
+    if (process.platform === 'darwin') {
+      const script =
+        'tell application "System Events" to get name of first application process whose frontmost is true';
+      execFile('osascript', ['-e', script], (err, stdout) => {
+        const name = err ? '' : String(stdout).trim();
+        resolve(name && !OWN_PROCESS_NAMES.has(name.toLowerCase()) ? name : null);
+      });
+      return;
+    }
+    if (process.platform === 'linux') {
+      execFile('xdotool', ['getactivewindow'], (err, stdout) => {
+        const id = err ? '' : String(stdout).trim();
+        resolve(/^\d+$/.test(id) ? id : null);
+      });
+      return;
+    }
+    resolve(null);
+  });
+}
+
+/** Restore the captured window, falling back to a tab switch when there is none. */
+async function refocusPreviousApp() {
   const delayMs = 80;
-  const run = () => {
-    if (process.platform === 'win32') {
-      if (!keybd_event) return;
-      keybd_event(VK_MENU, 0, 0, 0);
-      keybd_event(VK_TAB, 0, 0, 0);
-      keybd_event(VK_TAB, 0, KEYUP, 0);
-      keybd_event(VK_MENU, 0, KEYUP, 0);
-    } else if (process.platform === 'darwin') {
-      const script = [
-        'tell application "System Events"',
-        '  key down command',
-        '  key code 48', // Tab
-        '  key up command',
-        'end tell',
-      ].join('\n');
+  const target = await previousAppPromise;
+
+  setTimeout(() => {
+    if (target === null) {
+      refocusWithTabSwitch();
+      return;
+    }
+    if (process.platform === 'darwin') {
+      const script = `tell application "System Events" to set frontmost of process "${escapeAppleScriptString(target)}" to true`;
       execFile('osascript', ['-e', script], err => {
         if (err) {
-          console.warn('refocus previous app (Cmd+Tab) failed:', err.message);
+          console.warn('refocus previous app failed, falling back to Cmd+Tab:', err.message);
+          refocusWithTabSwitch();
         }
       });
     } else if (process.platform === 'linux') {
-      execFile('xdotool', ['key', '--clearmodifiers', 'alt+Tab'], err => {
+      execFile('xdotool', ['windowactivate', target], err => {
         if (err) {
-          console.warn('refocus previous app (Alt+Tab) failed. Install xdotool:', err.message);
+          console.warn('refocus previous app failed, falling back to Alt+Tab:', err.message);
+          refocusWithTabSwitch();
         }
       });
     }
-  };
-  setTimeout(run, delayMs);
+  }, delayMs);
+}
+
+/** Fallback: one Alt+Tab / Cmd+Tab to whatever the system considers the last app. */
+function refocusWithTabSwitch() {
+  if (process.platform === 'win32') {
+    if (!keybd_event) return;
+    keybd_event(VK_MENU, 0, 0, 0);
+    keybd_event(VK_TAB, 0, 0, 0);
+    keybd_event(VK_TAB, 0, KEYUP, 0);
+    keybd_event(VK_MENU, 0, KEYUP, 0);
+  } else if (process.platform === 'darwin') {
+    const script = [
+      'tell application "System Events"',
+      '  key down command',
+      '  key code 48', // Tab
+      '  key up command',
+      'end tell',
+    ].join('\n');
+    execFile('osascript', ['-e', script], err => {
+      if (err) {
+        console.warn('refocus previous app (Cmd+Tab) failed:', err.message);
+      }
+    });
+  } else if (process.platform === 'linux') {
+    execFile('xdotool', ['key', '--clearmodifiers', 'alt+Tab'], err => {
+      if (err) {
+        console.warn('refocus previous app (Alt+Tab) failed. Install xdotool:', err.message);
+      }
+    });
+  }
 }
 
 function createTrayIconFallback() {
@@ -121,6 +184,26 @@ async function getTrayIcon() {
 }
 
 // ── Overlay window ──────────────────────────────────────────────────────────
+// The overlay covers the screen and swallows every click, so there has to be a way out
+// that does not depend on the whip finishing its fall.
+function registerDismissShortcut() {
+  if (globalShortcut.isRegistered('Escape')) return;
+  const registered = globalShortcut.register('Escape', () => {
+    if (!overlay || !overlay.isVisible()) return;
+    overlay.webContents.send('dismiss-overlay');
+    unregisterDismissShortcut();
+    spawnQueued = false;
+    overlay.hide(); // hide here too, so escaping never depends on the renderer answering
+  });
+  if (!registered) {
+    console.warn('openwhip: could not register Escape, click to drop the whip instead');
+  }
+}
+
+function unregisterDismissShortcut() {
+  if (globalShortcut.isRegistered('Escape')) globalShortcut.unregister('Escape');
+}
+
 function createOverlay() {
   const { bounds } = screen.getPrimaryDisplay();
   overlay = new BrowserWindow({
@@ -152,6 +235,7 @@ function createOverlay() {
     overlay = null;
     overlayReady = false;
     spawnQueued = false;
+    unregisterDismissShortcut();
   });
 }
 
@@ -160,8 +244,11 @@ function toggleOverlay() {
     overlay.webContents.send('drop-whip');
     return;
   }
+  // Must run before the overlay shows, or the frontmost window is already this app.
+  capturePreviousApp();
   if (!overlay) createOverlay();
   overlay.show();
+  registerDismissShortcut();
   if (overlayReady) {
     overlay.webContents.send('spawn-whip');
     refocusPreviousApp();
@@ -171,14 +258,24 @@ function toggleOverlay() {
 }
 
 // ── IPC ─────────────────────────────────────────────────────────────────────
-ipcMain.on('whip-crack', () => {
+function fromOverlay(event) {
+  return !!overlay && event.sender === overlay.webContents;
+}
+
+ipcMain.on('whip-crack', event => {
+  if (!fromOverlay(event) || !overlay.isVisible()) return;
   try {
     sendMacro();
   } catch (err) {
     console.warn('sendMacro failed:', err?.message || err);
   }
 });
-ipcMain.on('hide-overlay', () => { if (overlay) overlay.hide(); });
+ipcMain.on('hide-overlay', event => {
+  if (!fromOverlay(event)) return;
+  unregisterDismissShortcut();
+  spawnQueued = false;
+  overlay.hide();
+});
 
 // ── Macro: immediate Ctrl+C, type "Go FASER", Enter ───────────────────────
 function sendMacro() {
@@ -230,7 +327,7 @@ function sendMacroWindows(text) {
 }
 
 function sendMacroMac(text) {
-  const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const escaped = escapeAppleScriptString(text);
   const interruptScript = [
     'tell application "System Events"',
     '  key code 8 using {control down}', // Ctrl+C interrupt
@@ -243,6 +340,8 @@ function sendMacroMac(text) {
     'end tell'
   ].join('\n');
 
+  // Staying as two calls on purpose: if the interrupt fails, the phrase must not be
+  // typed into a terminal that is still busy.
   execFile('osascript', ['-e', interruptScript], err => {
     if (err) {
       console.warn('mac macro failed (enable Accessibility for terminal/app):', err.message);
@@ -278,7 +377,7 @@ function sendMacroLinux(text) {
 // ── App lifecycle ───────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
   tray = new Tray(await getTrayIcon());
-  tray.setToolTip('OpenWhip - click for whip');
+  tray.setToolTip('OpenWhip - click for whip, Esc to put it away');
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Quit', click: () => app.quit() },
@@ -288,3 +387,4 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray
+app.on('will-quit', () => globalShortcut.unregisterAll());
