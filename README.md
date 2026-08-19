@@ -17,6 +17,44 @@ windows and mac supported out of the box, but Linux is a special snowflake so yo
 sudo apt install xdotool
 ```
 
+### NixOS / Nix
+
+This repo ships a flake, so you don't need `npm` or `xdotool` set up by hand and the package pulls in system Electron and `xdotool` for you.
+
+Run it once without installing:
+
+```bash
+nix run github:GitFrog1111/OpenWhip
+```
+
+Install it into your profile:
+
+```bash
+nix profile install github:GitFrog1111/OpenWhip
+```
+
+Or add it to your NixOS/home-manager config via the flake's overlay:
+
+```nix
+{
+  inputs.openwhip.url = "github:GitFrog1111/OpenWhip";
+
+  outputs = { self, nixpkgs, openwhip, ... }: {
+    nixosConfigurations.yourhost = nixpkgs.lib.nixosSystem {
+      # ...
+      modules = [
+        {
+          nixpkgs.overlays = [ openwhip.overlays.default ];
+          environment.systemPackages = [ pkgs.openwhip ];
+        }
+      ];
+    };
+  };
+}
+```
+
+Once installed, OpenWhip shows up in your application launcher (rofi, GNOME/KDE app grids, etc.) with its icon — the desktop entry and icon are installed automatically, no manual `.desktop` file wrangling needed.
+
 ## Controls
 
 - Click tray icon: spawn whip.

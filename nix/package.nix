@@ -54,8 +54,10 @@ in
       cp icon/icon.ico $out/lib/${pname}/icon/
       cp icon/Template.png $out/lib/${pname}/icon/
 
-      # Install icons
-      # cp icon/icon.ico $out/share/icons/hicolor/scalable/apps/${pname}.ico
+      # Install the icon into the hicolor theme so application launchers
+      # (rofi, GNOME Shell, KDE, etc.) can find it by the desktop entry's
+      # Icon=${pname} name
+      install -Dm444 icon/Template.png $out/share/icons/hicolor/512x512/apps/${pname}.png
 
       # Create wrapper script that uses system Electron
       # GPU flags help reduce compositor stutter on launch/close
