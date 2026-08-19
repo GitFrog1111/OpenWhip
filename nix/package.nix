@@ -13,10 +13,9 @@
   desktopItem = makeDesktopItem {
     name = pname;
     desktopName = "OpenWhip";
-    comment = "Whip to beat AI's arse";
+    comment = "Sometimes claude code is going too shlow, and you must whip him into shape..";
     exec = pname;
     icon = pname;
-    categories = [];
     terminal = false;
     startupWMClass = "openwhip";
   };
@@ -74,7 +73,7 @@ in
 
     meta = with lib; {
       description = "openwhip";
-      homepage = "idk bro";
+      homepage = "https://github.com/GitFrog1111/OpenWhip";
       license = licenses.mit;
       platforms = platforms.unix;
       mainProgram = pname;
