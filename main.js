@@ -355,10 +355,19 @@ function sendMacroWayland(text) {
   // and through execFile's argv so there is no shell quoting to get wrong. The
   // pause lets the interrupted TUI redraw its prompt before we type into it -
   // without it the first characters land while the app is still tearing down.
+  // The Return is deliberately held back from the typing burst. TUIs that
+  // implement bracketed paste - Claude Code among them - treat a newline arriving
+  // inside a fast input burst as a literal line break rather than a submit, so the
+  // phrase lands in the prompt and just sits there. Successive cracks then pile up
+  // in the same input box and go out as one run-together message. A gap puts the
+  // Return outside the paste window so it registers as a real keypress.
   const whip = () =>
     run(['-M', 'ctrl', '-k', 'c', '-m', 'ctrl'], () =>
       setTimeout(
-        () => run(['-d', '12', '--', text], () => run(['-k', 'Return'], finish)),
+        () =>
+          run(['-d', '12', '--', text], () =>
+            setTimeout(() => run(['-k', 'Return'], finish), 150)
+          ),
         120
       )
     );
