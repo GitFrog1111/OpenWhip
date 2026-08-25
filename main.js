@@ -29,6 +29,37 @@ const VK_MENU    = 0x12; // Alt
 const VK_TAB     = 0x09;
 const KEYUP      = 0x0002;
 
+/**
+ * sway: remember which window was focused when the whip spawned.
+ *
+ * Alt+Tab is the wrong tool under a tiling compositor - there is no
+ * most-recently-used stack to walk. Worse, sway defaults to
+ * focus_follows_mouse=yes, and cracking a whip means flinging the pointer across
+ * the screen, so focus lands on whatever it passed over and the macro types
+ * there. Recording the target up front and focusing it explicitly before typing
+ * makes it deterministic no matter where the cursor ends up.
+ */
+let swayTargetConId = null;
+
+function captureSwayFocus() {
+  if (process.platform !== 'linux' || !process.env.WAYLAND_DISPLAY) return;
+  execFile('swaymsg', ['-t', 'get_tree'], (err, stdout) => {
+    if (err) return; // not sway (Hyprland, GNOME, ...) - fall back to whatever has focus
+    try {
+      const find = n =>
+        n.focused
+          ? n.id
+          : [...(n.nodes || []), ...(n.floating_nodes || [])].reduce(
+              (found, child) => found || find(child),
+              null
+            );
+      swayTargetConId = find(JSON.parse(stdout));
+    } catch {
+      swayTargetConId = null;
+    }
+  });
+}
+
 /** One Alt+Tab / Cmd+Tab so focus returns to the previously active app after tray click. */
 function refocusPreviousApp() {
   const delayMs = 80;
@@ -52,7 +83,10 @@ function refocusPreviousApp() {
           console.warn('refocus previous app (Cmd+Tab) failed:', err.message);
         }
       });
-    } else if (process.platform === 'linux') {
+    } else if (process.platform === 'linux' && !process.env.WAYLAND_DISPLAY) {
+      // Skipped under Wayland: the tray lives in a layer-shell bar and the overlay
+      // is focusable:false, so neither ever takes keyboard focus and there is
+      // nothing to hand back. sway also has no MRU stack for Alt+Tab to walk.
       execFile('xdotool', ['key', '--clearmodifiers', 'alt+Tab'], err => {
         if (err) {
           console.warn('refocus previous app (Alt+Tab) failed. Install xdotool:', err.message);
@@ -160,6 +194,8 @@ function toggleOverlay() {
     overlay.webContents.send('drop-whip');
     return;
   }
+  // Before anything is shown or the pointer starts moving, note who we are whipping.
+  captureSwayFocus();
   if (!overlay) createOverlay();
   overlay.show();
   if (overlayReady) {
@@ -260,6 +296,67 @@ function sendMacroMac(text) {
 }
 
 function sendMacroLinux(text) {
+  // xdotool drives XTEST, which a wlroots compositor does not route to Wayland
+  // clients - under sway it reaches XWayland windows and nothing else, so whipping
+  // a Wayland-native terminal silently does nothing. wtype(1) speaks the
+  // virtual-keyboard Wayland protocol, which does get through. Pick per session.
+  if (process.env.WAYLAND_DISPLAY) {
+    sendMacroWayland(text);
+  } else {
+    sendMacroX11(text);
+  }
+}
+
+function sendMacroWayland(text) {
+  // The overlay is created with alwaysOnTop 'screen-saver', which Electron maps to
+  // a layer-shell surface holding keyboard interactivity. While it is up, sway
+  // routes the virtual keyboard to IT - not to the window sway still reports as
+  // focused - so every keystroke vanishes into the whip. Dropping the surface for
+  // the ~200ms the macro takes is what actually releases the keyboard; refocusing
+  // alone is not enough. Put it straight back so the whip survives the crack.
+  const wasVisible = Boolean(overlay && overlay.isVisible());
+  let restored = false;
+  const restoreOverlay = () => {
+    if (restored) return;
+    restored = true;
+    if (wasVisible && overlay && !overlay.isDestroyed()) overlay.show();
+  };
+  if (wasVisible) overlay.hide();
+
+  const run = (args, next) =>
+    execFile('wtype', args, err => {
+      if (err) {
+        console.warn('wayland macro failed. Install wtype:', err.message);
+        restoreOverlay();
+        return;
+      }
+      if (next) next();
+    });
+
+  // Text goes after `--` so a phrase starting with `-` is never read as an option,
+  // and through execFile's argv so there is no shell quoting to get wrong. The
+  // pause lets the interrupted TUI redraw its prompt before we type into it -
+  // without it the first characters land while the app is still tearing down.
+  const whip = () =>
+    run(['-M', 'ctrl', '-k', 'c', '-m', 'ctrl'], () =>
+      setTimeout(
+        () => run(['-d', '12', '--', text], () => run(['-k', 'Return'], restoreOverlay)),
+        120
+      )
+    );
+
+  // Hand focus back to whoever we are whipping. Without this the keystrokes follow
+  // the pointer under focus_follows_mouse and land in whichever window it crossed.
+  if (swayTargetConId != null) {
+    execFile('swaymsg', [`[con_id=${swayTargetConId}]`, 'focus'], () =>
+      setTimeout(whip, 40)
+    );
+  } else {
+    whip();
+  }
+}
+
+function sendMacroX11(text) {
   execFile(
     'xdotool',
     [
