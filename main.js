@@ -43,6 +43,18 @@ let swayTargetConId = null;
 
 /** True while a Wayland macro is running - see sendMacroWayland. */
 let macroInFlight = false;
+let lastMacroEndedAt = 0;
+
+/**
+ * Quiet period after a macro before another crack is accepted.
+ *
+ * overlay.html fires a crack whenever the whip tip exceeds crackSpeed, with only a
+ * 200ms cooldown - and one flick of the wrist holds the tip above that threshold
+ * for most of a second, so a single whip motion triggers several times. That used
+ * to be invisible because the phrases merged into one prompt; once the Return
+ * started registering properly it turned into several separate messages per whip.
+ */
+const MACRO_REFRACTORY_MS = 800;
 
 function captureSwayFocus() {
   if (process.platform !== 'linux' || !process.env.WAYLAND_DISPLAY) return;
@@ -317,7 +329,7 @@ function sendMacroWayland(text) {
   // their own virtual keyboard and interleave, which shows up as phrases running
   // together with no Enter between them and words truncated mid-word. Drop cracks
   // that arrive while one is still in flight rather than stacking them.
-  if (macroInFlight) return;
+  if (macroInFlight || Date.now() - lastMacroEndedAt < MACRO_REFRACTORY_MS) return;
   macroInFlight = true;
 
   // The overlay is created with alwaysOnTop 'screen-saver', which Electron maps to
@@ -335,6 +347,7 @@ function sendMacroWayland(text) {
     clearTimeout(watchdog);
     if (wasVisible && overlay && !overlay.isDestroyed()) overlay.show();
     macroInFlight = false;
+    lastMacroEndedAt = Date.now();
   };
   // Belt and braces: if wtype ever wedges, this stops one stuck run from leaving
   // the whip permanently unable to crack again.
@@ -352,15 +365,24 @@ function sendMacroWayland(text) {
     });
 
   // Text goes after `--` so a phrase starting with `-` is never read as an option,
-  // and through execFile's argv so there is no shell quoting to get wrong. The
-  // pause lets the interrupted TUI redraw its prompt before we type into it -
-  // without it the first characters land while the app is still tearing down.
-  // The Return is deliberately held back from the typing burst. TUIs that
-  // implement bracketed paste - Claude Code among them - treat a newline arriving
-  // inside a fast input burst as a literal line break rather than a submit, so the
-  // phrase lands in the prompt and just sits there. Successive cracks then pile up
-  // in the same input box and go out as one run-together message. A gap puts the
-  // Return outside the paste window so it registers as a real keypress.
+  // and through execFile's argv so there is no shell quoting to get wrong.
+  //
+  // 120 lets the interrupted TUI redraw its prompt before we type into it, and 150
+  // keeps the Return out of the typing burst so a terminal implementing bracketed
+  // paste reads it as a keypress rather than a pasted line break.
+  //
+  // Both are empirical. Raising them does NOT make this more reliable - that was
+  // measured, not assumed. Whether the Return submits turns out to depend mostly on
+  // what the target app is doing at that instant: it lands reliably against an idle
+  // prompt, and unreliably against one that is mid-render or streaming output, where
+  // the phrase types in but the newline does not submit and the next crack's text
+  // piles in behind it. That is a property of the target, not a constant to tune, so
+  // these are deliberately back at the lowest values that worked.
+  // Ctrl+C, and it has to be Ctrl+C. Escape was tried and is worse: it does not
+  // interrupt, so anything typed during a running operation queues up behind it and
+  // arrives as one batch. The interrupt is not incidental here - it is what returns
+  // the target to an idle prompt, which is the state where the Return actually
+  // submits. No interrupt, no submit.
   const whip = () =>
     run(['-M', 'ctrl', '-k', 'c', '-m', 'ctrl'], () =>
       setTimeout(
