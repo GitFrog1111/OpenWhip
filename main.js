@@ -41,6 +41,9 @@ const KEYUP      = 0x0002;
  */
 let swayTargetConId = null;
 
+/** True while a Wayland macro is running - see sendMacroWayland. */
+let macroInFlight = false;
+
 function captureSwayFocus() {
   if (process.platform !== 'linux' || !process.env.WAYLAND_DISPLAY) return;
   execFile('swaymsg', ['-t', 'get_tree'], (err, stdout) => {
@@ -308,6 +311,15 @@ function sendMacroLinux(text) {
 }
 
 function sendMacroWayland(text) {
+  // One macro is three wtype spawns plus a 120ms pause plus the refocus - well over
+  // overlay.html's 200ms crack cooldown, so an enthusiastic whipper re-enters this
+  // before the previous run has finished. Concurrent wtype invocations each create
+  // their own virtual keyboard and interleave, which shows up as phrases running
+  // together with no Enter between them and words truncated mid-word. Drop cracks
+  // that arrive while one is still in flight rather than stacking them.
+  if (macroInFlight) return;
+  macroInFlight = true;
+
   // The overlay is created with alwaysOnTop 'screen-saver', which Electron maps to
   // a layer-shell surface holding keyboard interactivity. While it is up, sway
   // routes the virtual keyboard to IT - not to the window sway still reports as
@@ -315,19 +327,25 @@ function sendMacroWayland(text) {
   // the ~200ms the macro takes is what actually releases the keyboard; refocusing
   // alone is not enough. Put it straight back so the whip survives the crack.
   const wasVisible = Boolean(overlay && overlay.isVisible());
-  let restored = false;
-  const restoreOverlay = () => {
-    if (restored) return;
-    restored = true;
+  let finished = false;
+  let watchdog = null;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(watchdog);
     if (wasVisible && overlay && !overlay.isDestroyed()) overlay.show();
+    macroInFlight = false;
   };
+  // Belt and braces: if wtype ever wedges, this stops one stuck run from leaving
+  // the whip permanently unable to crack again.
+  watchdog = setTimeout(finish, 3000);
   if (wasVisible) overlay.hide();
 
   const run = (args, next) =>
     execFile('wtype', args, err => {
       if (err) {
         console.warn('wayland macro failed. Install wtype:', err.message);
-        restoreOverlay();
+        finish();
         return;
       }
       if (next) next();
@@ -340,7 +358,7 @@ function sendMacroWayland(text) {
   const whip = () =>
     run(['-M', 'ctrl', '-k', 'c', '-m', 'ctrl'], () =>
       setTimeout(
-        () => run(['-d', '12', '--', text], () => run(['-k', 'Return'], restoreOverlay)),
+        () => run(['-d', '12', '--', text], () => run(['-k', 'Return'], finish)),
         120
       )
     );
