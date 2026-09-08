@@ -23,7 +23,7 @@ const P = {
   // Physics
   gravity:        2.0,   // normal gravity
   dropGravity:    2.6,   // gravity when dropping/despawning
-  damping:        0.92,  // velocity retention per frame (1 = no loss)
+  damping:        0.94,  // velocity retention per frame (1 = no loss)
   restDamping:    0.80,  // damping while the hand is still, so the whip settles
   restHandSpeed:  0.6,   // hand speed (px/frame) under which the whip is considered at rest
   restLinkSpeed:  6,     // only links slower than this get rest damping, so falls stay fast
@@ -43,10 +43,10 @@ const P = {
   basePoseStiffEnd:   0.8, // stiffness near end of guided region
 
   // Elastic bend limits by chain position (handle stiff, tip floppy)
-  handleMaxBendDeg: 16,   // max angle between links near handle
-  tipMaxBendDeg:   130,   // max angle between links near tip
-  bendRigidityStart: 0.8, // correction strength near handle
-  bendRigidityEnd:   0.12, // correction strength near tip
+  handleMaxBendDeg: 14,   // max angle between links near handle
+  tipMaxBendDeg:   45,    // max angle between links near tip (low = no tangles)
+  bendRigidityStart: 0.85, // correction strength near handle
+  bendRigidityEnd:   0.65, // correction strength near tip
 
   // Screen-edge slap
   wallBounce:      0.42,   // velocity retained after wall hit
@@ -71,7 +71,7 @@ const P = {
   bgAlpha:        0.011,  // barely-visible bg so window captures mouse events
 
   // Mass taper + air drag (heavier handle, light fast tip)
-  tipMass:        0.35,   // tip mass relative to handle (constraints move light links more)
+  tipMass:        0.25,   // tip mass relative to handle (constraints move light links more)
   airDrag:        0.0003, // per-frame drag proportional to speed
   maxAirDrag:     0.12,   // cap on drag fraction per frame
 
