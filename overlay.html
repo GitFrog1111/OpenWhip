@@ -21,17 +21,21 @@ const P = {
   taper:          0.6,   // tip segment is this fraction of base length
 
   // Physics
-  gravity:        1.2,   // normal gravity
-  dropGravity:    0.95,    // gravity when dropping/despawning
-  damping:        0.96,  // velocity retention per frame (1 = no loss)
+  gravity:        2.0,   // normal gravity
+  dropGravity:    2.6,   // gravity when dropping/despawning
+  damping:        0.92,  // velocity retention per frame (1 = no loss)
+  restDamping:    0.80,  // damping while the hand is still, so the whip settles
+  restHandSpeed:  0.6,   // hand speed (px/frame) under which the whip is considered at rest
+  restLinkSpeed:  6,     // only links slower than this get rest damping, so falls stay fast
+  sleepSpeed:     0.03,  // velocities below this are zeroed
   constraintIters:20,     // higher = stiffer chain
   maxStretchRatio: 1.2,  // hard cap for per-link stretch during fast whips
 
   // Dynamic handle aim (target angle + restoring spring, not static lock)
   baseTargetAngle: -1.12, // radians, default "up-right" resting direction
-  handleAimByMouseX: 0.4, // horizontal mouse movement influence on target angle
-  handleAimByMouseY: 0.2, // vertical mouse movement influence on target angle
-  handleAimClamp:    2.0,  // max radians target can deviate from base angle
+  handleAimByMouseX: 0.25, // horizontal mouse movement influence on target angle
+  handleAimByMouseY: 0.12, // vertical mouse movement influence on target angle
+  handleAimClamp:    1.4,  // max radians target can deviate from base angle
   handleSpring:      0.7,  // restoring force to target angle
   handleAngularDamping: 0.078, // angular velocity damping
   basePoseSegments: 2,    // how many early segments are strongly guided
@@ -49,8 +53,13 @@ const P = {
   wallFriction:    0.86,   // tangential damping on wall hit
 
   // Crack detection
-  crackSpeed:     340,     // tip velocity threshold to trigger crack
-  crackCooldownMs:200,   // min ms between cracks
+  crackSpeed:     340,     // tip velocity (px/frame) to trigger crack
+  crackLinks:     2,       // trailing links whose speed counts for a crack
+  strikeSpeed:    180,     // tip speed that arms a click to type
+  strikeWindowMs: 300,     // how long after a fast tip a click still counts
+  substeps:       1,       // physics sub-steps per frame
+  solveMode:      'split', // 'split': symmetric, dissipative; 'handleFirst': parent link is authoritative (snappier, can jitter)
+  crackCooldownMs:450,   // min ms between cracks
   firstCrackGraceMs: 350, // no crack (macro) until this long after spawn
 
   // Visuals
@@ -60,6 +69,26 @@ const P = {
   handleExtraWidth: 5,    // added core + outline thickness on first handleThickSegments links only
   handleThickSegments: 2, // how many links from the handle get handleExtraWidth
   bgAlpha:        0.011,  // barely-visible bg so window captures mouse events
+
+  // Mass taper + air drag (heavier handle, light fast tip)
+  tipMass:        0.35,   // tip mass relative to handle (constraints move light links more)
+  airDrag:        0.0003, // per-frame drag proportional to speed
+  maxAirDrag:     0.12,   // cap on drag fraction per frame
+
+  // Crack FX
+  trailLength:    12,     // tip positions kept for the motion trail
+  trailMinSpeed:  40,     // tip speed where the trail starts showing
+  sparkCount:     22,
+  phraseMs:       1600,   // how long the phrase stays on screen
+
+  // Bottles
+  bottleCount:    5,      // bottles on screen while the whip is out
+  bottleW:        34,
+  bottleH:        96,
+  breakSpeed:     130,    // tip speed needed to shatter a bottle
+  bottleRespawnMs:1800,   // delay before a broken bottle is replaced
+  tipHitLinks:    6,      // trailing links that can break bottles
+  shardCount:     14,
 
   // Initial arc shape
   arcWidth:       260,    // how far right the arc extends from mouse
@@ -79,8 +108,13 @@ window.addEventListener('resize', resize);
 let mouseX = 0, mouseY = 0;
 let prevMouseX = 0, prevMouseY = 0;
 let whip = null;
+let mode = 'whip';
+let hand = null;
+let hearts = [];
+let pats = 0;
 let dropping = false;
 let lastCrackTime = 0;
+let lastFastTime = 0;
 let whipSpawnTime = 0;
 let handleAngle = P.baseTargetAngle;
 let handleAngVel = 0;
@@ -88,9 +122,29 @@ let handleAngVel = 0;
 const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
 
 document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
-document.addEventListener('mousedown', () => {
-  if (whip && !dropping) dropping = true;
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('mousedown', e => {
+  if (mode === 'pat') {
+    if (!hand || hand.leaving) return;
+    if (e.button === 2) { hand.leaving = true; hand.leaveT = Date.now(); return; }
+    pat();
+    return;
+  }
+  if (!whip || dropping) return;
+  if (e.button === 2) {
+    dropping = true;
+    return;
+  }
+  if (Date.now() - lastFastTime <= P.strikeWindowMs) strike();
 });
+
+function strike() {
+  const tip = whip[whip.length - 1];
+  lastCrackTime = Date.now();
+  playCrackSound();
+  crackFx(tip.x, tip.y, tip.x - tip.px || 1, tip.y - tip.py);
+  window.bridge.whipCrack();
+}
 
 // ── Whip creation ───────────────────────────────────────────────────────────
 function spawnWhip(mx, my) {
@@ -106,6 +160,14 @@ function spawnWhip(mx, my) {
     pts.push({ x, y, px: x, py: y });
   }
   return pts;
+}
+
+function speedScale() {
+  return Math.min(1, Math.min(W, H) / 1080);
+}
+
+function segMass(i) {
+  return lerp(1, P.tipMass, i / (P.segments - 1));
 }
 
 function segLen(i) {
@@ -295,41 +357,42 @@ function applyWallCollisions() {
 }
 
 // ── Physics step ────────────────────────────────────────────────────────────
-function update() {
-  if (!whip) return;
-
-  const g = dropping ? P.dropGravity : P.gravity;
-  updateHandleAim();
-
-  // Verlet integration
-  const start = dropping ? 0 : 1; // if dropping, handle is free too
+function integrate(hx, hy, N) {
+  const g = (dropping ? P.dropGravity : P.gravity) / (N * N);
+  const handSpeed = Math.hypot(mouseX - prevMouseX, mouseY - prevMouseY);
+  const handStill = !dropping && handSpeed < P.restHandSpeed;
+  const damp = Math.pow(P.damping, 1 / N);
+  const restDamp = Math.pow(P.restDamping, 1 / N);
+  const start = dropping ? 0 : 1;
   for (let i = start; i < whip.length; i++) {
     const p = whip[i];
-    const vx = (p.x - p.px) * P.damping;
-    const vy = (p.y - p.py) * P.damping;
+    const slow = handStill && Math.hypot(p.x - p.px, p.y - p.py) * N < P.restLinkSpeed;
+    let vx = (p.x - p.px) * (slow ? restDamp : damp);
+    let vy = (p.y - p.py) * (slow ? restDamp : damp);
+    const drag = 1 - Math.min(P.maxAirDrag, P.airDrag * Math.hypot(vx, vy) * N) / N;
+    vx *= drag;
+    vy *= drag;
+    if (Math.abs(vx) < P.sleepSpeed) vx = 0;
+    if (Math.abs(vy) < P.sleepSpeed) vy = 0;
     p.px = p.x;
     p.py = p.y;
     p.x += vx;
     p.y += vy + g;
   }
 
-  // Pin handle to mouse
   if (!dropping) {
-    whip[0].x = mouseX;
-    whip[0].y = mouseY;
-    whip[0].px = mouseX;
-    whip[0].py = mouseY;
+    whip[0].x = hx;
+    whip[0].y = hy;
+    whip[0].px = hx;
+    whip[0].py = hy;
   }
 
-  // Prevent rubber-band stretching spikes before constraints.
   capSegmentStretch();
   applyWallCollisions();
-
-  // Keep early whip segments posed upward from handle.
   applyBasePose();
 
-  // Distance constraints (multiple iterations for stiffness)
-  for (let iter = 0; iter < P.constraintIters; iter++) {
+  const iters = Math.max(1, Math.round(P.constraintIters / N));
+  for (let iter = 0; iter < iters; iter++) {
     for (let i = 0; i < whip.length - 1; i++) {
       const a = whip[i], b = whip[i + 1];
       const dx = b.x - a.x, dy = b.y - a.y;
@@ -337,41 +400,65 @@ function update() {
       const target = segLen(i);
       const diff = (dist - target) / dist * 0.5;
       const ox = dx * diff, oy = dy * diff;
-      if (i === 0 && !dropping) {
-        // Handle is pinned – push only the next point
+      if ((i === 0 && !dropping) || (P.solveMode === 'handleFirst' && !dropping)) {
         b.x -= ox * 2;
         b.y -= oy * 2;
       } else {
-        a.x += ox; a.y += oy;
-        b.x -= ox; b.y -= oy;
+        const wa = segMass(i + 1) / (segMass(i) + segMass(i + 1));
+        a.x += ox * 2 * wa; a.y += oy * 2 * wa;
+        b.x -= ox * 2 * (1 - wa); b.y -= oy * 2 * (1 - wa);
       }
     }
-    // Clamp bend angle per joint; near handle = stiffer, near tip = floppier.
     applyBendLimits();
     if (!dropping) applyBasePose();
     capSegmentStretch();
     applyWallCollisions();
   }
+}
 
-  // Tip velocity for crack detection
+function tipSpeed(N) {
+  let best = 0;
+  for (let i = Math.max(1, whip.length - P.crackLinks); i < whip.length; i++) {
+    const p = whip[i];
+    best = Math.max(best, Math.hypot(p.x - p.px, p.y - p.py) * N);
+  }
+  return best;
+}
+
+function update() {
+  if (mode === 'pat') { updateHand(); updateFx(); return; }
+  if (!whip) return;
+
+  const N = P.substeps;
+  updateHandleAim();
+  let peak = 0;
+  for (let k = 1; k <= N; k++) {
+    const t = k / N;
+    integrate(lerp(prevMouseX, mouseX, t), lerp(prevMouseY, mouseY, t), N);
+    if (!dropping) {
+      peak = Math.max(peak, tipSpeed(N));
+      checkBottleHits(N);
+    }
+  }
+
   const tip = whip[whip.length - 1];
-  const tipVel = Math.hypot(tip.x - tip.px, tip.y - tip.py);
-
-  if (!dropping && tipVel > P.crackSpeed) {
+  if (!dropping && peak > P.strikeSpeed * speedScale()) lastFastTime = Date.now();
+  if (!dropping && peak > P.crackSpeed * speedScale()) {
     const now = Date.now();
     if (now - whipSpawnTime >= P.firstCrackGraceMs && now - lastCrackTime > P.crackCooldownMs) {
       lastCrackTime = now;
       playCrackSound();
-      window.bridge.whipCrack();
+      crackFx(tip.x, tip.y, tip.x - tip.px, tip.y - tip.py);
     }
   }
 
-  // If dropping, check if everything fell off screen
   if (dropping && whip.every(p => p.y > H + 60)) {
     whip = null;
     dropping = false;
     window.bridge.hideOverlay();
   }
+  updateBottles();
+  updateFx();
   prevMouseX = mouseX;
   prevMouseY = mouseY;
 }
@@ -384,7 +471,12 @@ function draw() {
   ctx.fillStyle = `rgba(0,0,0,${P.bgAlpha})`;
   ctx.fillRect(0, 0, W, H);
 
+  if (mode === 'pat') { drawHand(); drawFx(); drawPatHud(); return; }
+  drawBottles();
+  drawHud();
+  drawFx();
   if (!whip) return;
+  drawTrail();
 
   // White: thin halo on full spline, then extra thickness only over handle links.
   ctx.lineCap = 'round';
@@ -425,6 +517,504 @@ function draw() {
     ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
     ctx.stroke();
   }
+  drawGrip();
+}
+
+// ── Crack FX, trail, grip ───────────────────────────────────────────────────
+let trail = [];
+let sparks = [];
+let rings = [];
+let phrase = null;
+
+function crackFx(x, y, vx, vy) {
+  const sp = Math.hypot(vx, vy) || 1;
+  const dirX = vx / sp, dirY = vy / sp;
+  for (let k = 0; k < P.sparkCount; k++) {
+    const spread = (Math.random() - 0.5) * 1.6;
+    const c = Math.cos(spread), s = Math.sin(spread);
+    const speed = 4 + Math.random() * 10;
+    sparks.push({
+      x, y,
+      vx: (dirX * c - dirY * s) * speed,
+      vy: (dirX * s + dirY * c) * speed,
+      life: 1,
+      size: 1.5 + Math.random() * 2.5,
+      hot: Math.random() < 0.5,
+    });
+  }
+  rings.push({ x, y, r: 6, life: 1 });
+}
+
+function updateFx() {
+  if (whip && !dropping) {
+    const tip = whip[whip.length - 1];
+    trail.push({ x: tip.x, y: tip.y, sp: Math.hypot(tip.x - tip.px, tip.y - tip.py) * P.substeps });
+    if (trail.length > P.trailLength) trail.shift();
+  } else {
+    trail = [];
+  }
+  for (const s of sparks) {
+    s.vy += 0.35;
+    s.vx *= 0.94;
+    s.vy *= 0.94;
+    s.x += s.vx;
+    s.y += s.vy;
+    s.life -= 0.045;
+  }
+  sparks = sparks.filter(s => s.life > 0);
+  for (const r of rings) {
+    r.r += 18;
+    r.life -= 0.05;
+  }
+  rings = rings.filter(r => r.life > 0);
+  if (phrase && Date.now() - phrase.t > P.phraseMs) phrase = null;
+}
+
+function drawTrail() {
+  if (trail.length < 3) return;
+  if (trail.filter(t => t.sp > P.trailMinSpeed).length < 2) return;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#fff';
+  for (let i = 1; i < trail.length; i++) {
+    const a = trail[i - 1], b = trail[i];
+    const t = i / trail.length;
+    const k = Math.min(1, b.sp / (P.crackSpeed * speedScale()));
+    ctx.globalAlpha = 0.6 * t * k;
+    ctx.lineWidth = 3 + 14 * t * k;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawFx() {
+  for (const r of rings) {
+    ctx.save();
+    ctx.globalAlpha = r.life * 0.7;
+    ctx.lineWidth = 3 + 6 * r.life;
+    ctx.strokeStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#111';
+    ctx.stroke();
+    ctx.restore();
+  }
+  for (const s of sparks) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, s.life);
+    ctx.fillStyle = s.hot ? '#ffd54a' : '#fff';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (phrase) {
+    const age = (Date.now() - phrase.t) / P.phraseMs;
+    const pop = 1 + 0.4 * Math.max(0, 1 - age * 4);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, (1 - age) * 2);
+    ctx.translate(W / 2, H * 0.18 - age * 30);
+    ctx.scale(pop, pop);
+    ctx.font = '900 72px -apple-system, Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 14;
+    ctx.strokeStyle = '#fff';
+    ctx.fillStyle = phrase.kind === 'pat' ? '#2e7d32' : '#c62828';
+    ctx.strokeText(phrase.text, 0, 0);
+    ctx.fillText(phrase.text, 0, 0);
+    ctx.restore();
+  }
+}
+
+function drawGrip() {
+  if (!whip || whip.length < 3) return;
+  const a = whip[0], b = whip[2];
+  const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len * 6, ny = dx / len * 6;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineWidth = P.lineWidthHandle + P.handleExtraWidth + 6;
+  ctx.strokeStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+  ctx.lineWidth = P.lineWidthHandle + P.handleExtraWidth + 2;
+  ctx.strokeStyle = '#6d3f1c';
+  ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,220,160,0.55)';
+  for (let i = 1; i < 4; i++) {
+    const x = lerp(a.x, b.x, i / 4), y = lerp(a.y, b.y, i / 4);
+    ctx.beginPath();
+    ctx.moveTo(x - nx, y - ny);
+    ctx.lineTo(x + nx, y + ny);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+window.bridge.onCrackPhrase((text, kind) => {
+  phrase = { text, kind: kind || 'whip', t: Date.now() };
+});
+
+// ── Pat on the shoulder ─────────────────────────────────────────────────────
+function pat() {
+  hand.press = 1;
+  pats++;
+  for (let k = 0; k < 7; k++) {
+    hearts.push({
+      x: hand.x + (Math.random() - 0.5) * 110,
+      y: hand.y - 95 - Math.random() * 30,
+      vx: (Math.random() - 0.5) * 1.6,
+      vy: -1.8 - Math.random() * 1.6,
+      life: 1,
+      size: 18 + Math.random() * 16,
+      glyph: Math.random() < 0.7 ? '❤️' : '✨',
+      wob: Math.random() * Math.PI * 2,
+    });
+  }
+  window.bridge.handPat();
+}
+
+function updateHand() {
+  if (!hand) return;
+  const k = 0.18;
+  hand.vx = (hand.vx + (mouseX - hand.x) * k) * 0.72;
+  hand.vy = (hand.vy + (mouseY - hand.y) * k) * 0.72;
+  hand.x += hand.vx;
+  hand.y += hand.vy;
+  hand.bob += 0.06;
+  hand.press *= 0.86;
+  for (const h of hearts) {
+    h.wob += 0.12;
+    h.x += h.vx + Math.sin(h.wob) * 0.6;
+    h.y += h.vy;
+    h.vy *= 0.985;
+    h.life -= 0.012;
+  }
+  hearts = hearts.filter(h => h.life > 0);
+  if (hand.leaving && Date.now() - hand.leaveT > 700 && !hearts.length) {
+    hand = null;
+    mode = 'whip';
+    window.bridge.hideOverlay();
+  }
+}
+
+function heartPath(x, y, r) {
+  ctx.beginPath();
+  ctx.moveTo(x, y + r * 0.9);
+  ctx.bezierCurveTo(x - r * 1.6, y - r * 0.2, x - r * 0.9, y - r * 1.3, x, y - r * 0.5);
+  ctx.bezierCurveTo(x + r * 0.9, y - r * 1.3, x + r * 1.6, y - r * 0.2, x, y + r * 0.9);
+  ctx.closePath();
+}
+
+function roundedRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawHandShape(scale, waving) {
+  const skin = '#f1c27d', edge = '#8d5524';
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.lineWidth = 3 / scale;
+  ctx.strokeStyle = edge;
+  ctx.fillStyle = skin;
+  roundedRect(-34, -20, 68, 70, 18);
+  ctx.fill();
+  ctx.stroke();
+  const fingers = [[-30, 62, 14], [-12, 70, 15], [6, 66, 15], [24, 56, 14]];
+  for (const [fx, len, fw] of fingers) {
+    const spread = waving ? Math.sin(Date.now() / 90 + fx) * 3 : 0;
+    roundedRect(fx - fw / 2 + spread, -len, fw, len + 10, fw / 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.save();
+  ctx.translate(-40, 14);
+  ctx.rotate(-0.9);
+  roundedRect(-8, -30, 16, 44, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(141,85,36,0.35)';
+  ctx.lineWidth = 2 / scale;
+  ctx.beginPath();
+  ctx.moveTo(-18, 10);
+  ctx.quadraticCurveTo(0, 30, 20, 8);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawHand() {
+  for (const h of hearts) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, h.life);
+    if (h.glyph === '✨') {
+      ctx.fillStyle = '#ffd54a';
+      ctx.strokeStyle = '#111';
+      ctx.lineWidth = 1;
+      const r = h.size * 0.35;
+      ctx.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const ang = i * Math.PI / 4;
+        const rr = i % 2 ? r * 0.35 : r;
+        ctx.lineTo(h.x + Math.cos(ang) * rr, h.y + Math.sin(ang) * rr);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      heartPath(h.x, h.y, h.size * 0.45);
+      ctx.fillStyle = '#e53950';
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+  if (!hand) return;
+  const leaving = hand.leaving ? Math.min(1, (Date.now() - hand.leaveT) / 700) : 0;
+  const scale = 1.1 * (1 - 0.2 * hand.press) * (1 - leaving * 0.5);
+  const tilt = Math.sin(hand.bob) * 0.06 + (hand.leaving ? Math.sin(Date.now() / 70) * 0.45 : 0) + hand.vx * 0.01;
+  ctx.save();
+  ctx.globalAlpha = 1 - leaving;
+  ctx.translate(hand.x, hand.y + hand.press * 26 + Math.sin(hand.bob) * 3);
+  ctx.rotate(tilt);
+  ctx.shadowColor = 'rgba(0,0,0,0.3)';
+  ctx.shadowBlur = 16;
+  ctx.shadowOffsetY = 8 + hand.press * 6;
+  drawHandShape(scale, hand.leaving);
+  ctx.restore();
+}
+
+function drawPatHud() {
+  if (!hand) return;
+  const text = `Pats ${pats}`;
+  ctx.save();
+  ctx.font = 'bold 28px -apple-system, Segoe UI, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = '#fff';
+  ctx.fillStyle = '#2e7d32';
+  ctx.strokeText(text, W - 28, 24);
+  ctx.fillText(text, W - 28, 24);
+  ctx.restore();
+}
+
+// ── Bottles & score ─────────────────────────────────────────────────────────
+const BOTTLE_TINTS = ['#3f8f4f', '#7a4a1f', '#2f6f9f', '#8f8f3f'];
+let bottles = [];
+let shards = [];
+let score = 0;
+let best = 0;
+let combo = 0;
+let lastBreakTime = 0;
+try { best = Number(localStorage.getItem('openwhip.best')) || 0; } catch {}
+
+function shelfSpots() {
+  const spots = [];
+  const rows = [H * 0.22, H * 0.5];
+  const cols = 6;
+  for (const y of rows) {
+    for (let c = 0; c < cols; c++) {
+      spots.push({ x: W * (0.12 + 0.76 * c / (cols - 1)), y });
+    }
+  }
+  return spots;
+}
+
+function placeBottle() {
+  const free = shelfSpots().filter(sp => !bottles.some(b => Math.abs(b.x - sp.x) < P.bottleW && Math.abs(b.y - sp.y) < P.bottleH));
+  if (!free.length) return null;
+  const sp = free[Math.floor(Math.random() * free.length)];
+  return { x: sp.x, y: sp.y, w: P.bottleW, h: P.bottleH, tint: BOTTLE_TINTS[Math.floor(Math.random() * BOTTLE_TINTS.length)], wobble: 0 };
+}
+
+function ensureBottles() {
+  while (bottles.length < P.bottleCount) {
+    const b = placeBottle();
+    if (!b) break;
+    bottles.push(b);
+  }
+}
+
+let respawnTimers = [];
+function scheduleRespawn() {
+  respawnTimers.push(Date.now() + P.bottleRespawnMs);
+}
+
+function segmentHitsRect(ax, ay, bx, by, r) {
+  const left = r.x - r.w / 2, right = r.x + r.w / 2, top = r.y - r.h, bottom = r.y;
+  const inside = (x, y) => x >= left && x <= right && y >= top && y <= bottom;
+  if (inside(ax, ay) || inside(bx, by)) return true;
+  const steps = 4;
+  for (let k = 1; k < steps; k++) {
+    const t = k / steps;
+    if (inside(lerp(ax, bx, t), lerp(ay, by, t))) return true;
+  }
+  return false;
+}
+
+function shatter(b, vx, vy) {
+  for (let k = 0; k < P.shardCount; k++) {
+    const ang = Math.random() * Math.PI * 2;
+    const sp = 2 + Math.random() * 6;
+    shards.push({
+      x: b.x + (Math.random() - 0.5) * b.w,
+      y: b.y - Math.random() * b.h,
+      vx: Math.cos(ang) * sp + vx * 0.15,
+      vy: Math.sin(ang) * sp + vy * 0.15 - 3,
+      rot: Math.random() * Math.PI,
+      vr: (Math.random() - 0.5) * 0.4,
+      size: 4 + Math.random() * 7,
+      tint: b.tint,
+      life: 1,
+    });
+  }
+  const now = Date.now();
+  combo = now - lastBreakTime < 900 ? combo + 1 : 1;
+  lastBreakTime = now;
+  score += 10 * combo;
+  if (score > best) {
+    best = score;
+    try { localStorage.setItem('openwhip.best', String(best)); } catch {}
+  }
+  playCrackSound();
+}
+
+function checkBottleHits(N) {
+  const from = Math.max(1, whip.length - P.tipHitLinks);
+  for (let i = from; i < whip.length; i++) {
+    const p = whip[i];
+    const vx = (p.x - p.px) * N, vy = (p.y - p.py) * N;
+    if (Math.hypot(vx, vy) < P.breakSpeed * speedScale()) continue;
+    for (let j = bottles.length - 1; j >= 0; j--) {
+      if (segmentHitsRect(p.px, p.py, p.x, p.y, bottles[j])) {
+        shatter(bottles[j], vx, vy);
+        bottles.splice(j, 1);
+        scheduleRespawn();
+      }
+    }
+  }
+}
+
+function updateBottles() {
+  const now = Date.now();
+  respawnTimers = respawnTimers.filter(t => {
+    if (t > now) return true;
+    const b = placeBottle();
+    if (b) bottles.push(b);
+    return false;
+  });
+
+  for (const s of shards) {
+    s.vy += 0.5;
+    s.x += s.vx;
+    s.y += s.vy;
+    s.rot += s.vr;
+    s.life -= 0.018;
+  }
+  shards = shards.filter(s => s.life > 0 && s.y < H + 40);
+}
+
+function drawBottle(b) {
+  const left = b.x - b.w / 2, top = b.y - b.h;
+  const neckW = b.w * 0.42, neckH = b.h * 0.3;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(b.x - neckW / 2, top);
+  ctx.lineTo(b.x + neckW / 2, top);
+  ctx.lineTo(b.x + neckW / 2, top + neckH * 0.55);
+  ctx.quadraticCurveTo(left + b.w, top + neckH, left + b.w, top + neckH + 8);
+  ctx.lineTo(left + b.w, b.y - 6);
+  ctx.quadraticCurveTo(left + b.w, b.y, left + b.w - 6, b.y);
+  ctx.lineTo(left + 6, b.y);
+  ctx.quadraticCurveTo(left, b.y, left, b.y - 6);
+  ctx.lineTo(left, top + neckH + 8);
+  ctx.quadraticCurveTo(left, top + neckH, b.x - neckW / 2, top + neckH * 0.55);
+  ctx.closePath();
+  ctx.fillStyle = b.tint;
+  ctx.globalAlpha = 0.85;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#fff';
+  ctx.stroke();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#111';
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.fillRect(left + 5, top + neckH + 14, 5, b.h - neckH - 30);
+  ctx.fillStyle = '#e8e2c8';
+  ctx.fillRect(b.x - neckW / 2 - 2, top - 6, neckW + 4, 8);
+  ctx.restore();
+}
+
+function drawBottles() {
+  for (const b of bottles) drawBottle(b);
+  for (const s of shards) {
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(s.rot);
+    ctx.globalAlpha = Math.max(0, s.life);
+    ctx.fillStyle = s.tint;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-s.size / 2, s.size / 2);
+    ctx.lineTo(s.size / 2, s.size / 2);
+    ctx.lineTo(0, -s.size / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawHud() {
+  if (!whip && !shards.length) return;
+  const text = `Score ${score}`;
+  const sub = `Best ${best}${combo > 1 && Date.now() - lastBreakTime < 900 ? `   x${combo}` : ''}`;
+  ctx.save();
+  ctx.font = 'bold 28px -apple-system, Segoe UI, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = '#fff';
+  ctx.fillStyle = '#111';
+  ctx.strokeText(text, W - 28, 24);
+  ctx.fillText(text, W - 28, 24);
+  ctx.font = 'bold 16px -apple-system, Segoe UI, sans-serif';
+  ctx.lineWidth = 4;
+  ctx.strokeText(sub, W - 28, 60);
+  ctx.fillText(sub, W - 28, 60);
+  ctx.restore();
 }
 
 // ── Main loop ───────────────────────────────────────────────────────────────
@@ -436,7 +1026,18 @@ function loop() {
 loop();
 
 // ── IPC from main process ───────────────────────────────────────────────────
+let bottleW = 0, bottleH = 0;
 window.bridge.onSpawnWhip(() => {
+  mode = 'whip';
+  hand = null;
+  resize();
+  if (W !== bottleW || H !== bottleH) {
+    bottles = [];
+    respawnTimers = [];
+    bottleW = W;
+    bottleH = H;
+  }
+  ensureBottles();
   whip = spawnWhip(mouseX || W / 2, mouseY || H / 2);
   dropping = false;
   prevMouseX = mouseX;
@@ -446,7 +1047,21 @@ window.bridge.onSpawnWhip(() => {
 });
 
 window.bridge.onDropWhip(() => {
+  if (mode === 'pat') {
+    if (hand && !hand.leaving) { hand.leaving = true; hand.leaveT = Date.now(); }
+    return;
+  }
   if (whip && !dropping) dropping = true;
+});
+
+window.bridge.onSpawnHand(() => {
+  resize();
+  mode = 'pat';
+  whip = null;
+  dropping = false;
+  bottles = [];
+  shards = [];
+  hand = { x: mouseX || W / 2, y: mouseY || H / 2, vx: 0, vy: 0, press: 0, bob: 0, leaving: false, leaveT: 0, t: Date.now() };
 });
 
 </script>
