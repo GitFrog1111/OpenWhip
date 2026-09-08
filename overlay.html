@@ -33,7 +33,7 @@ const P = {
 
   // Dynamic handle aim (target angle + restoring spring, not static lock)
   baseTargetAngle: -1.12, // radians, resting direction when facing right (mirrored when facing left)
-  facingFlipSpeed: 2,     // horizontal hand speed (px/step) that flips which way the handle leans
+  facingFlipSpeed: 4.5,   // horizontal hand speed (px/step) that flips which way the handle leans
   handleAimByMouseX: 0.25, // horizontal mouse movement influence on target angle
   handleAimByMouseY: 0.12, // vertical mouse movement influence on target angle
   handleAimClamp:    1.4,  // max radians target can deviate from base angle
@@ -44,7 +44,7 @@ const P = {
   basePoseStiffEnd:   0.8, // stiffness near end of guided region
 
   // Elastic bend limits by chain position (handle stiff, tip floppy)
-  handleMaxBendDeg: 32,   // max angle between links near handle
+  handleMaxBendDeg: 60,   // max angle between links near handle
   tipMaxBendDeg:   45,    // max angle between links near tip (low = no tangles)
   bendRigidityStart: 0.85, // correction strength near handle
   bendRigidityEnd:   0.65, // correction strength near tip
