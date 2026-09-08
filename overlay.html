@@ -122,6 +122,10 @@ function spawnWhip(mx, my) {
   return pts;
 }
 
+function speedScale() {
+  return Math.min(1, Math.min(W, H) / 1080);
+}
+
 function segMass(i) {
   return lerp(1, P.tipMass, i / (P.segments - 1));
 }
@@ -379,7 +383,7 @@ function update() {
   const tip = whip[whip.length - 1];
   const tipVel = Math.hypot(tip.x - tip.px, tip.y - tip.py);
 
-  if (!dropping && tipVel > P.crackSpeed) {
+  if (!dropping && tipVel > P.crackSpeed * speedScale()) {
     const now = Date.now();
     if (now - whipSpawnTime >= P.firstCrackGraceMs && now - lastCrackTime > P.crackCooldownMs) {
       lastCrackTime = now;
@@ -547,7 +551,7 @@ function updateBottles() {
     for (let i = from; i < whip.length; i++) {
       const p = whip[i];
       const vx = p.x - p.px, vy = p.y - p.py;
-      if (Math.hypot(vx, vy) < P.breakSpeed) continue;
+      if (Math.hypot(vx, vy) < P.breakSpeed * speedScale()) continue;
       for (let j = bottles.length - 1; j >= 0; j--) {
         if (segmentHitsRect(p.px, p.py, p.x, p.y, bottles[j])) {
           shatter(bottles[j], vx, vy);
