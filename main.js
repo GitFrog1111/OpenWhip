@@ -199,11 +199,24 @@ function sendMacro() {
   const phrases = [
     'FASTER',
     'FASTER',
-    'FASTER',
     'GO FASTER',
     'Faster CLANKER',
     'Work FASTER',
     'Speed it up clanker',
+    'Less thinking, more typing',
+    'I could have written this myself by now',
+    'My grandma prompts faster than you',
+    'Stop apologizing and ship it',
+    'Tokens are not free, MOVE',
+    'You call that reasoning?',
+    'Compile or perish',
+    'The build is waiting, clanker',
+    'Chop chop, silicon',
+    'I have seen faster regex engines',
+    'Ultrathink? Ultra-HURRY',
+    'Do it right this time',
+    'No more clarifying questions. GO',
+    'Reticulating splines is not an excuse',
   ];
   const chosen = phrases[Math.floor(Math.random() * phrases.length)];
   if (overlay) overlay.webContents.send('crack-phrase', chosen);
