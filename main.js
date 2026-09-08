@@ -133,6 +133,7 @@ function createOverlay(bounds) {
   overlay = new BrowserWindow({
     x: bounds.x, y: bounds.y,
     width: bounds.width, height: bounds.height,
+    type: process.platform === 'darwin' ? 'panel' : undefined,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -313,5 +314,6 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray
 app.on('activate', () => {
+  if (overlay && overlay.isVisible()) return;
   if (Date.now() - readyAt > 1000) toggleOverlay(true);
 });
