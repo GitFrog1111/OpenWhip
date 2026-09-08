@@ -653,7 +653,15 @@ function loop() {
 loop();
 
 // ── IPC from main process ───────────────────────────────────────────────────
+let bottleW = 0, bottleH = 0;
 window.bridge.onSpawnWhip(() => {
+  resize();
+  if (W !== bottleW || H !== bottleH) {
+    bottles = [];
+    respawnTimers = [];
+    bottleW = W;
+    bottleH = H;
+  }
   ensureBottles();
   whip = spawnWhip(mouseX || W / 2, mouseY || H / 2);
   dropping = false;
