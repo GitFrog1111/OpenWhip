@@ -22,6 +22,7 @@ let tray, overlay;
 let overlayReady = false;
 let spawnQueued = false;
 let refocusQueued = false;
+let readyAt = 0;
 
 const TOGGLE_SHORTCUT = 'Alt+Shift+W';
 
@@ -289,10 +290,8 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.whenReady().then(async () => {
-  if (process.platform === 'darwin') {
-    app.dock.hide();
-    systemPreferences.isTrustedAccessibilityClient(true);
-  }
+  if (process.platform === 'darwin') systemPreferences.isTrustedAccessibilityClient(true);
+  readyAt = Date.now();
   const trayIcon = await getTrayIcon();
   tray = new Tray(process.platform === 'darwin' ? trayIcon.resize({ width: 18, height: 18 }) : trayIcon);
   tray.setToolTip(`OpenWhip - click or ${TOGGLE_SHORTCUT} for whip`);
@@ -301,10 +300,12 @@ app.whenReady().then(async () => {
   ]);
   tray.on('right-click', () => tray.popUpContextMenu(trayMenu));
   tray.on('click', () => toggleOverlay(true));
-  tray.on('mouse-enter', () => { if (!overlay || !overlay.isVisible()) toggleOverlay(true); });
   if (!globalShortcut.register(TOGGLE_SHORTCUT, () => toggleOverlay())) {
     console.warn(`openwhip: could not register ${TOGGLE_SHORTCUT}`);
   }
 });
 
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray
+app.on('activate', () => {
+  if (Date.now() - readyAt > 1000) toggleOverlay(true);
+});

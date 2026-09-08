@@ -37,7 +37,6 @@ function ensureMacApp(electronBinary, pkgRoot) {
   plist(appPath, 'CFBundleDisplayName', APP_NAME);
   plist(appPath, 'CFBundleExecutable', APP_NAME);
   plist(appPath, 'CFBundleIdentifier', BUNDLE_ID);
-  run('plutil', ['-replace', 'LSUIElement', '-bool', 'true', path.join(appPath, 'Contents', 'Info.plist')]);
 
   run('codesign', ['--force', '--deep', '--sign', '-', appPath]);
   fs.utimesSync(appPath, new Date(), new Date());
