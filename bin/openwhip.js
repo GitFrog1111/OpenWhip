@@ -17,14 +17,15 @@ try {
 }
 
 const appPath = path.resolve(__dirname, '..');
+const extraArgs = process.argv.slice(2);
 
 const spawnOpts = { detached: true, stdio: 'ignore', windowsHide: true };
 let child;
 if (process.platform === 'darwin') {
   const { ensureMacApp } = require('../scripts/mac-app');
-  child = spawn('open', ['-n', ensureMacApp(electronBinary, appPath), '--args', appPath], spawnOpts);
+  child = spawn('open', ['-n', ensureMacApp(electronBinary, appPath), '--args', appPath, ...extraArgs], spawnOpts);
 } else {
-  child = spawn(electronBinary, [appPath], spawnOpts);
+  child = spawn(electronBinary, [appPath, ...extraArgs], spawnOpts);
 }
 
 child.on('error', (err) => {

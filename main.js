@@ -382,7 +382,7 @@ function sendMacroLinux(text) {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => toggleOverlay());
+  app.on('second-instance', (e, argv) => toggleOverlay(false, argv.includes('pat') ? 'pat' : 'whip'));
 }
 
 app.whenReady().then(async () => {

@@ -30,7 +30,7 @@ sudo apt install xdotool
 
 For the days he deserves it. Press `Option+Shift+P` (`Alt+Shift+P`) or pick it from the tray menu: a hand follows
 your mouse. Left click pats him, sends a kind word (no interrupt, just the message and Enter) and floats some hearts.
-Right click waves goodbye.
+Right click waves goodbye. From a terminal, `openwhip pat` summons the hand and `openwhip` the whip.
 
 ## macOS setup
 
