@@ -368,15 +368,16 @@ function applyWallCollisions() {
 function integrate(hx, hy, N) {
   const g = (dropping ? P.dropGravity : P.gravity) / (N * N);
   const handSpeed = Math.hypot(handX - prevHandX, handY - prevHandY);
-  const handStill = !dropping && handSpeed < P.restHandSpeed;
+  const handMix = dropping ? 1 : clamp(handSpeed / (P.restHandSpeed * 2), 0, 1);
   const damp = Math.pow(P.damping, 1 / N);
   const restDamp = Math.pow(P.restDamping, 1 / N);
   const start = dropping ? 0 : 1;
   for (let i = start; i < whip.length; i++) {
     const p = whip[i];
-    const slow = handStill && Math.hypot(p.x - p.px, p.y - p.py) * N < P.restLinkSpeed;
-    let vx = (p.x - p.px) * (slow ? restDamp : damp);
-    let vy = (p.y - p.py) * (slow ? restDamp : damp);
+    const linkMix = clamp(Math.hypot(p.x - p.px, p.y - p.py) * N / P.restLinkSpeed, 0, 1);
+    const d = lerp(restDamp, damp, Math.max(handMix, linkMix));
+    let vx = (p.x - p.px) * d;
+    let vy = (p.y - p.py) * d;
     const drag = 1 - Math.min(P.maxAirDrag, P.airDrag * Math.hypot(vx, vy) * N) / N;
     vx *= drag;
     vy *= drag;
@@ -437,6 +438,7 @@ function update() {
   if (mode === 'pat') { updateHand(); updateFx(); return; }
   if (!whip) return;
 
+  for (const p of whip) { p.rx = p.x; p.ry = p.y; }
   const N = P.substeps;
   handX += (mouseX - handX) * P.handSmoothing;
   handY += (mouseY - handY) * P.handSmoothing;
@@ -476,8 +478,10 @@ function update() {
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
+let renderWhip = null;
 function draw() {
   ctx.clearRect(0, 0, W, H);
+  renderWhip = whip ? whip.map(p => ({ x: lerp(p.rx ?? p.x, p.x, renderAlpha), y: lerp(p.ry ?? p.y, p.y, renderAlpha) })) : null;
 
   // Near-invisible fill so the window captures mouse events on Windows
   ctx.fillStyle = `rgba(0,0,0,${P.bgAlpha})`;
@@ -494,22 +498,22 @@ function draw() {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = '#fff';
-  if (whip.length >= 2) {
+  if (renderWhip.length >= 2) {
     ctx.beginPath();
-    ctx.moveTo(whip[0].x, whip[0].y);
-    for (let i = 0; i < whip.length - 1; i++) {
-      const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
+    ctx.moveTo(renderWhip[0].x, renderWhip[0].y);
+    for (let i = 0; i < renderWhip.length - 1; i++) {
+      const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(renderWhip, i);
       ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
     }
     ctx.lineWidth = P.lineWidthTip + P.outlineWidth * 2;
     ctx.stroke();
 
-    const thickLinks = Math.min(P.handleThickSegments, whip.length - 1);
+    const thickLinks = Math.min(P.handleThickSegments, renderWhip.length - 1);
     if (thickLinks > 0 && P.handleExtraWidth > 0) {
       ctx.beginPath();
-      ctx.moveTo(whip[0].x, whip[0].y);
+      ctx.moveTo(renderWhip[0].x, renderWhip[0].y);
       for (let i = 0; i < thickLinks; i++) {
-        const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
+        const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(renderWhip, i);
         ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
       }
       ctx.lineWidth =
@@ -519,13 +523,13 @@ function draw() {
   }
 
   ctx.strokeStyle = '#111';
-  for (let i = 0; i < whip.length - 1; i++) {
-    const t = i / Math.max(1, whip.length - 2);
+  for (let i = 0; i < renderWhip.length - 1; i++) {
+    const t = i / Math.max(1, renderWhip.length - 2);
     const extra = i < P.handleThickSegments ? P.handleExtraWidth : 0;
     ctx.lineWidth = lerp(P.lineWidthHandle, P.lineWidthTip, t) + extra;
-    const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
+    const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(renderWhip, i);
     ctx.beginPath();
-    ctx.moveTo(whip[i].x, whip[i].y);
+    ctx.moveTo(renderWhip[i].x, renderWhip[i].y);
     ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
     ctx.stroke();
   }
@@ -649,8 +653,9 @@ function drawFx() {
 }
 
 function drawGrip() {
-  if (!whip || whip.length < 3) return;
-  const a = whip[0], b = whip[2];
+  const rw = renderWhip;
+  if (!rw || rw.length < 3) return;
+  const a = rw[0], b = rw[2];
   const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
   const nx = -dy / len * 6, ny = dx / len * 6;
   ctx.save();
@@ -1031,6 +1036,7 @@ function drawHud() {
 
 // ── Main loop ───────────────────────────────────────────────────────────────
 let simAccumulator = 0;
+let renderAlpha = 1;
 let lastFrameTime = performance.now();
 function loop(now) {
   if (!P.simHz) {
@@ -1042,6 +1048,7 @@ function loop(now) {
       update();
       simAccumulator -= step;
     }
+    renderAlpha = clamp(simAccumulator / step, 0, 1);
   }
   lastFrameTime = now;
   draw();
