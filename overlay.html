@@ -21,11 +21,12 @@ const P = {
   taper:          0.6,   // tip segment is this fraction of base length
 
   // Physics
-  gravity:        1.5,   // normal gravity
-  dropGravity:    0.95,    // gravity when dropping/despawning
+  gravity:        2.0,   // normal gravity
+  dropGravity:    2.6,   // gravity when dropping/despawning
   damping:        0.94,  // velocity retention per frame (1 = no loss)
   restDamping:    0.80,  // damping while the hand is still, so the whip settles
   restHandSpeed:  0.6,   // hand speed (px/frame) under which the whip is considered at rest
+  restLinkSpeed:  2.5,   // only links slower than this get rest damping, so falls stay fast
   sleepSpeed:     0.03,  // velocities below this are zeroed
   constraintIters:20,     // higher = stiffer chain
   maxStretchRatio: 1.2,  // hard cap for per-link stretch during fast whips
@@ -346,13 +347,15 @@ function applyWallCollisions() {
 function integrate(hx, hy, N) {
   const g = (dropping ? P.dropGravity : P.gravity) / (N * N);
   const handSpeed = Math.hypot(mouseX - prevMouseX, mouseY - prevMouseY);
-  const baseDamp = !dropping && handSpeed < P.restHandSpeed ? P.restDamping : P.damping;
-  const damp = Math.pow(baseDamp, 1 / N);
+  const handStill = !dropping && handSpeed < P.restHandSpeed;
+  const damp = Math.pow(P.damping, 1 / N);
+  const restDamp = Math.pow(P.restDamping, 1 / N);
   const start = dropping ? 0 : 1;
   for (let i = start; i < whip.length; i++) {
     const p = whip[i];
-    let vx = (p.x - p.px) * damp;
-    let vy = (p.y - p.py) * damp;
+    const slow = handStill && Math.hypot(p.x - p.px, p.y - p.py) * N < P.restLinkSpeed;
+    let vx = (p.x - p.px) * (slow ? restDamp : damp);
+    let vy = (p.y - p.py) * (slow ? restDamp : damp);
     const drag = 1 - Math.min(P.maxAirDrag, P.airDrag * Math.hypot(vx, vy) * N) / N;
     vx *= drag;
     vy *= drag;
