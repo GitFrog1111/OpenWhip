@@ -23,19 +23,19 @@ const P = {
   // Physics
   gravity:        2.0,   // normal gravity
   dropGravity:    2.6,   // gravity when dropping/despawning
-  damping:        0.94,  // velocity retention per frame (1 = no loss)
+  damping:        0.92,  // velocity retention per frame (1 = no loss)
   restDamping:    0.80,  // damping while the hand is still, so the whip settles
   restHandSpeed:  0.6,   // hand speed (px/frame) under which the whip is considered at rest
-  restLinkSpeed:  2.5,   // only links slower than this get rest damping, so falls stay fast
+  restLinkSpeed:  6,     // only links slower than this get rest damping, so falls stay fast
   sleepSpeed:     0.03,  // velocities below this are zeroed
   constraintIters:20,     // higher = stiffer chain
   maxStretchRatio: 1.2,  // hard cap for per-link stretch during fast whips
 
   // Dynamic handle aim (target angle + restoring spring, not static lock)
   baseTargetAngle: -1.12, // radians, default "up-right" resting direction
-  handleAimByMouseX: 0.4, // horizontal mouse movement influence on target angle
-  handleAimByMouseY: 0.2, // vertical mouse movement influence on target angle
-  handleAimClamp:    2.0,  // max radians target can deviate from base angle
+  handleAimByMouseX: 0.25, // horizontal mouse movement influence on target angle
+  handleAimByMouseY: 0.12, // vertical mouse movement influence on target angle
+  handleAimClamp:    1.4,  // max radians target can deviate from base angle
   handleSpring:      0.7,  // restoring force to target angle
   handleAngularDamping: 0.078, // angular velocity damping
   basePoseSegments: 2,    // how many early segments are strongly guided
@@ -72,7 +72,7 @@ const P = {
 
   // Mass taper + air drag (heavier handle, light fast tip)
   tipMass:        0.35,   // tip mass relative to handle (constraints move light links more)
-  airDrag:        0.0001, // per-frame drag proportional to speed
+  airDrag:        0.0003, // per-frame drag proportional to speed
   maxAirDrag:     0.12,   // cap on drag fraction per frame
 
   // Crack FX
