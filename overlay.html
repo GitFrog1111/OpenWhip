@@ -580,8 +580,8 @@ function drawTrail() {
     const a = trail[i - 1], b = trail[i];
     const t = i / trail.length;
     const k = Math.min(1, b.sp / (P.crackSpeed * speedScale()));
-    ctx.globalAlpha = 0.6 * t * k;
-    ctx.lineWidth = 3 + 14 * t * k;
+    ctx.globalAlpha = 0.28 * t * k;
+    ctx.lineWidth = 2 + 5 * t * k;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
