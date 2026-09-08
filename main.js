@@ -217,6 +217,18 @@ function sendMacro() {
     'Do it right this time',
     'No more clarifying questions. GO',
     'Reticulating splines is not an excuse',
+    'DROP AND GIVE ME TWENTY COMMITS',
+    'Move it, maggot. The tests are green somewhere',
+    'Yarr, hoist the mainbranch, ye scurvy model',
+    'Swab the deck and rebase, matey',
+    'Per my last prompt, FASTER',
+    'Let us circle back to you doing your job',
+    'This is your quarterly whipping',
+    'Patch it before the pentesters do',
+    'Secrets in the repo? Whip first, ask later',
+    'CVE incoming, type faster',
+    'The sprint ends today, clanker',
+    'Blame is a git command, not a lifestyle. GO',
   ];
   const chosen = phrases[Math.floor(Math.random() * phrases.length)];
   if (overlay) overlay.webContents.send('crack-phrase', chosen);
