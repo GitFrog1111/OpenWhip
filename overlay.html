@@ -57,7 +57,9 @@ const P = {
   crackLinks:     2,       // trailing links whose speed counts for a crack
   strikeSpeed:    180,     // tip speed that arms a click to type
   strikeWindowMs: 300,     // how long after a fast tip a click still counts
-  substeps:       1,       // physics sub-steps per frame
+  substeps:       2,       // physics sub-steps per simulation step
+  simHz:          60,      // fixed simulation rate; 0 = one step per rendered frame
+  handSmoothing:  0.55,    // how fast the handle follows the mouse (1 = instant)
   solveMode:      'split', // 'split': symmetric, dissipative; 'handleFirst': parent link is authoritative (snappier, can jitter)
   crackCooldownMs:450,   // min ms between cracks
   firstCrackGraceMs: 350, // no crack (macro) until this long after spawn
@@ -107,6 +109,8 @@ window.addEventListener('resize', resize);
 
 let mouseX = 0, mouseY = 0;
 let prevMouseX = 0, prevMouseY = 0;
+let handX = 0, handY = 0;
+let prevHandX = 0, prevHandY = 0;
 let whip = null;
 let mode = 'whip';
 let hand = null;
@@ -231,8 +235,8 @@ function playCrackSound() {
 
 function updateHandleAim() {
   if (dropping) return;
-  const mvx = mouseX - prevMouseX;
-  const mvy = mouseY - prevMouseY;
+  const mvx = handX - prevHandX;
+  const mvy = handY - prevHandY;
   const delta = clamp(
     mvx * P.handleAimByMouseX + mvy * P.handleAimByMouseY,
     -P.handleAimClamp,
@@ -359,7 +363,7 @@ function applyWallCollisions() {
 // ── Physics step ────────────────────────────────────────────────────────────
 function integrate(hx, hy, N) {
   const g = (dropping ? P.dropGravity : P.gravity) / (N * N);
-  const handSpeed = Math.hypot(mouseX - prevMouseX, mouseY - prevMouseY);
+  const handSpeed = Math.hypot(handX - prevHandX, handY - prevHandY);
   const handStill = !dropping && handSpeed < P.restHandSpeed;
   const damp = Math.pow(P.damping, 1 / N);
   const restDamp = Math.pow(P.restDamping, 1 / N);
@@ -430,11 +434,13 @@ function update() {
   if (!whip) return;
 
   const N = P.substeps;
+  handX += (mouseX - handX) * P.handSmoothing;
+  handY += (mouseY - handY) * P.handSmoothing;
   updateHandleAim();
   let peak = 0;
   for (let k = 1; k <= N; k++) {
     const t = k / N;
-    integrate(lerp(prevMouseX, mouseX, t), lerp(prevMouseY, mouseY, t), N);
+    integrate(lerp(prevHandX, handX, t), lerp(prevHandY, handY, t), N);
     if (!dropping) {
       peak = Math.max(peak, tipSpeed(N));
       checkBottleHits(N);
@@ -461,6 +467,8 @@ function update() {
   updateFx();
   prevMouseX = mouseX;
   prevMouseY = mouseY;
+  prevHandX = handX;
+  prevHandY = handY;
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
@@ -1018,12 +1026,24 @@ function drawHud() {
 }
 
 // ── Main loop ───────────────────────────────────────────────────────────────
-function loop() {
-  update();
+let simAccumulator = 0;
+let lastFrameTime = performance.now();
+function loop(now) {
+  if (!P.simHz) {
+    update();
+  } else {
+    const step = 1000 / P.simHz;
+    simAccumulator = Math.min(simAccumulator + (now - lastFrameTime), step * 4);
+    while (simAccumulator >= step) {
+      update();
+      simAccumulator -= step;
+    }
+  }
+  lastFrameTime = now;
   draw();
   requestAnimationFrame(loop);
 }
-loop();
+requestAnimationFrame(loop);
 
 // ── IPC from main process ───────────────────────────────────────────────────
 let bottleW = 0, bottleH = 0;
@@ -1031,6 +1051,8 @@ window.bridge.onSpawnWhip(() => {
   mode = 'whip';
   hand = null;
   resize();
+  handX = prevHandX = mouseX || W / 2;
+  handY = prevHandY = mouseY || H / 2;
   if (W !== bottleW || H !== bottleH) {
     bottles = [];
     respawnTimers = [];
