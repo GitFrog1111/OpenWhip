@@ -32,7 +32,8 @@ const P = {
   maxStretchRatio: 1.2,  // hard cap for per-link stretch during fast whips
 
   // Dynamic handle aim (target angle + restoring spring, not static lock)
-  baseTargetAngle: -1.12, // radians, default "up-right" resting direction
+  baseTargetAngle: -1.12, // radians, resting direction when facing right (mirrored when facing left)
+  facingFlipSpeed: 2,     // horizontal hand speed (px/step) that flips which way the handle leans
   handleAimByMouseX: 0.25, // horizontal mouse movement influence on target angle
   handleAimByMouseY: 0.12, // vertical mouse movement influence on target angle
   handleAimClamp:    1.4,  // max radians target can deviate from base angle
@@ -122,6 +123,7 @@ let lastFastTime = 0;
 let whipSpawnTime = 0;
 let handleAngle = P.baseTargetAngle;
 let handleAngVel = 0;
+let facing = 1;
 
 const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
 
@@ -237,12 +239,14 @@ function updateHandleAim() {
   if (dropping) return;
   const mvx = handX - prevHandX;
   const mvy = handY - prevHandY;
+  if (Math.abs(mvx) > P.facingFlipSpeed) facing = mvx > 0 ? 1 : -1;
+  const base = facing > 0 ? P.baseTargetAngle : -Math.PI - P.baseTargetAngle;
   const delta = clamp(
-    mvx * P.handleAimByMouseX + mvy * P.handleAimByMouseY,
+    mvx * P.handleAimByMouseX + mvy * P.handleAimByMouseY * facing,
     -P.handleAimClamp,
     P.handleAimClamp
   );
-  const target = P.baseTargetAngle + delta;
+  const target = base + delta;
   const err = wrapPi(target - handleAngle);
   handleAngVel += err * P.handleSpring;
   handleAngVel *= P.handleAngularDamping;
