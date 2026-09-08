@@ -38,6 +38,7 @@
     "icon",
     "bin/openwhip.js",
     "bin/badclaude.js",
+    "scripts/mac-app.js",
     "README.md"
   ],
   "scripts": {
