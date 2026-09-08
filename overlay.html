@@ -70,7 +70,7 @@ const P = {
   trailLength:    12,     // tip positions kept for the motion trail
   trailMinSpeed:  40,     // tip speed where the trail starts showing
   sparkCount:     22,
-  phraseMs:       900,    // how long the phrase stays on screen
+  phraseMs:       1600,   // how long the phrase stays on screen
 
   // Bottles
   bottleCount:    5,      // bottles on screen while the whip is out
@@ -510,8 +510,8 @@ function updateFx() {
   }
   sparks = sparks.filter(s => s.life > 0);
   for (const r of rings) {
-    r.r += 14;
-    r.life -= 0.08;
+    r.r += 18;
+    r.life -= 0.05;
   }
   rings = rings.filter(r => r.life > 0);
   if (phrase && Date.now() - phrase.t > P.phraseMs) phrase = null;
@@ -527,8 +527,8 @@ function drawTrail() {
     const a = trail[i - 1], b = trail[i];
     const t = i / trail.length;
     const k = Math.min(1, b.sp / (P.crackSpeed * speedScale()));
-    ctx.globalAlpha = 0.35 * t * k;
-    ctx.lineWidth = 2 + 10 * t * k;
+    ctx.globalAlpha = 0.6 * t * k;
+    ctx.lineWidth = 3 + 14 * t * k;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
@@ -568,13 +568,13 @@ function drawFx() {
     const pop = 1 + 0.4 * Math.max(0, 1 - age * 4);
     ctx.save();
     ctx.globalAlpha = Math.min(1, (1 - age) * 2);
-    ctx.translate(phrase.x, phrase.y - 40 - age * 50);
+    ctx.translate(W / 2, H * 0.18 - age * 30);
     ctx.scale(pop, pop);
-    ctx.font = '900 34px -apple-system, Segoe UI, sans-serif';
+    ctx.font = '900 72px -apple-system, Segoe UI, sans-serif';
     ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
+    ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = 8;
+    ctx.lineWidth = 14;
     ctx.strokeStyle = '#fff';
     ctx.fillStyle = '#c62828';
     ctx.strokeText(phrase.text, 0, 0);
@@ -613,7 +613,7 @@ function drawGrip() {
 
 window.bridge.onCrackPhrase(text => {
   const tip = whip ? whip[whip.length - 1] : { x: W / 2, y: H / 2 };
-  phrase = { text, x: clamp(tip.x, 140, W - 140), y: clamp(tip.y, 80, H), t: Date.now() };
+  phrase = { text, x: tip.x, y: tip.y, t: Date.now() };
 });
 
 // ── Bottles & score ─────────────────────────────────────────────────────────
