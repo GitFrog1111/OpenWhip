@@ -142,7 +142,7 @@ function createOverlay() {
     },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
-  overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  overlay.setVisibleOnAllWorkspaces(true);
   overlayReady = false;
   overlay.loadFile('overlay.html');
   overlay.webContents.on('did-finish-load', () => {
