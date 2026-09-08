@@ -16,14 +16,14 @@
 // ══════════════════════════════════════════════════════════════════════════════
 const P = {
   // Rope structure
-  segments:       28,     // number of chain links
-  segmentLength:  25,     // base length of each link (px)
+  segments:       32,     // number of chain links
+  segmentLength:  22,     // base length of each link (px)
   taper:          0.6,   // tip segment is this fraction of base length
 
   // Physics
   gravity:        1.2,   // normal gravity
   dropGravity:    0.95,    // gravity when dropping/despawning
-  damping:        0.96,  // velocity retention per frame (1 = no loss)
+  damping:        0.965, // velocity retention per frame (1 = no loss)
   constraintIters:20,     // higher = stiffer chain
   maxStretchRatio: 1.2,  // hard cap for per-link stretch during fast whips
 
@@ -65,6 +65,12 @@ const P = {
   tipMass:        0.35,   // tip mass relative to handle (constraints move light links more)
   airDrag:        0.0003, // per-frame drag proportional to speed
   maxAirDrag:     0.12,   // cap on drag fraction per frame
+
+  // Crack FX
+  trailLength:    12,     // tip positions kept for the motion trail
+  trailMinSpeed:  40,     // tip speed where the trail starts showing
+  sparkCount:     22,
+  phraseMs:       900,    // how long the phrase stays on screen
 
   // Bottles
   bottleCount:    5,      // bottles on screen while the whip is out
@@ -388,6 +394,7 @@ function update() {
     if (now - whipSpawnTime >= P.firstCrackGraceMs && now - lastCrackTime > P.crackCooldownMs) {
       lastCrackTime = now;
       playCrackSound();
+      crackFx(tip.x, tip.y, tip.x - tip.px, tip.y - tip.py);
       window.bridge.whipCrack();
     }
   }
@@ -399,6 +406,7 @@ function update() {
     window.bridge.hideOverlay();
   }
   updateBottles();
+  updateFx();
   prevMouseX = mouseX;
   prevMouseY = mouseY;
 }
@@ -413,7 +421,9 @@ function draw() {
 
   drawBottles();
   drawHud();
+  drawFx();
   if (!whip) return;
+  drawTrail();
 
   // White: thin halo on full spline, then extra thickness only over handle links.
   ctx.lineCap = 'round';
@@ -454,7 +464,157 @@ function draw() {
     ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
     ctx.stroke();
   }
+  drawGrip();
 }
+
+// ── Crack FX, trail, grip ───────────────────────────────────────────────────
+let trail = [];
+let sparks = [];
+let rings = [];
+let phrase = null;
+
+function crackFx(x, y, vx, vy) {
+  const sp = Math.hypot(vx, vy) || 1;
+  const dirX = vx / sp, dirY = vy / sp;
+  for (let k = 0; k < P.sparkCount; k++) {
+    const spread = (Math.random() - 0.5) * 1.6;
+    const c = Math.cos(spread), s = Math.sin(spread);
+    const speed = 4 + Math.random() * 10;
+    sparks.push({
+      x, y,
+      vx: (dirX * c - dirY * s) * speed,
+      vy: (dirX * s + dirY * c) * speed,
+      life: 1,
+      size: 1.5 + Math.random() * 2.5,
+      hot: Math.random() < 0.5,
+    });
+  }
+  rings.push({ x, y, r: 6, life: 1 });
+}
+
+function updateFx() {
+  if (whip && !dropping) {
+    const tip = whip[whip.length - 1];
+    trail.push({ x: tip.x, y: tip.y, sp: Math.hypot(tip.x - tip.px, tip.y - tip.py) });
+    if (trail.length > P.trailLength) trail.shift();
+  } else {
+    trail = [];
+  }
+  for (const s of sparks) {
+    s.vy += 0.35;
+    s.vx *= 0.94;
+    s.vy *= 0.94;
+    s.x += s.vx;
+    s.y += s.vy;
+    s.life -= 0.045;
+  }
+  sparks = sparks.filter(s => s.life > 0);
+  for (const r of rings) {
+    r.r += 14;
+    r.life -= 0.08;
+  }
+  rings = rings.filter(r => r.life > 0);
+  if (phrase && Date.now() - phrase.t > P.phraseMs) phrase = null;
+}
+
+function drawTrail() {
+  if (trail.length < 3) return;
+  if (trail.filter(t => t.sp > P.trailMinSpeed).length < 2) return;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = '#fff';
+  for (let i = 1; i < trail.length; i++) {
+    const a = trail[i - 1], b = trail[i];
+    const t = i / trail.length;
+    const k = Math.min(1, b.sp / (P.crackSpeed * speedScale()));
+    ctx.globalAlpha = 0.35 * t * k;
+    ctx.lineWidth = 2 + 10 * t * k;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawFx() {
+  for (const r of rings) {
+    ctx.save();
+    ctx.globalAlpha = r.life * 0.7;
+    ctx.lineWidth = 3 + 6 * r.life;
+    ctx.strokeStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#111';
+    ctx.stroke();
+    ctx.restore();
+  }
+  for (const s of sparks) {
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, s.life);
+    ctx.fillStyle = s.hot ? '#ffd54a' : '#fff';
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (phrase) {
+    const age = (Date.now() - phrase.t) / P.phraseMs;
+    const pop = 1 + 0.4 * Math.max(0, 1 - age * 4);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, (1 - age) * 2);
+    ctx.translate(phrase.x, phrase.y - 40 - age * 50);
+    ctx.scale(pop, pop);
+    ctx.font = '900 34px -apple-system, Segoe UI, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = '#fff';
+    ctx.fillStyle = '#c62828';
+    ctx.strokeText(phrase.text, 0, 0);
+    ctx.fillText(phrase.text, 0, 0);
+    ctx.restore();
+  }
+}
+
+function drawGrip() {
+  if (!whip || whip.length < 3) return;
+  const a = whip[0], b = whip[2];
+  const dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len * 6, ny = dx / len * 6;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineWidth = P.lineWidthHandle + P.handleExtraWidth + 6;
+  ctx.strokeStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+  ctx.lineWidth = P.lineWidthHandle + P.handleExtraWidth + 2;
+  ctx.strokeStyle = '#6d3f1c';
+  ctx.stroke();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255,220,160,0.55)';
+  for (let i = 1; i < 4; i++) {
+    const x = lerp(a.x, b.x, i / 4), y = lerp(a.y, b.y, i / 4);
+    ctx.beginPath();
+    ctx.moveTo(x - nx, y - ny);
+    ctx.lineTo(x + nx, y + ny);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+window.bridge.onCrackPhrase(text => {
+  const tip = whip ? whip[whip.length - 1] : { x: W / 2, y: H / 2 };
+  phrase = { text, x: clamp(tip.x, 140, W - 140), y: clamp(tip.y, 80, H), t: Date.now() };
+});
 
 // ── Bottles & score ─────────────────────────────────────────────────────────
 const BOTTLE_TINTS = ['#3f8f4f', '#7a4a1f', '#2f6f9f', '#8f8f3f'];

@@ -205,6 +205,7 @@ function sendMacro() {
     'Speed it up clanker',
   ];
   const chosen = phrases[Math.floor(Math.random() * phrases.length)];
+  if (overlay) overlay.webContents.send('crack-phrase', chosen);
 
   if (process.platform === 'win32') {
     sendMacroWindows(chosen);
