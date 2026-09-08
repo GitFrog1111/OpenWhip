@@ -39,6 +39,7 @@ function ensureMacApp(electronBinary, pkgRoot) {
   plist(appPath, 'CFBundleIdentifier', BUNDLE_ID);
 
   run('codesign', ['--force', '--deep', '--sign', '-', appPath]);
+  run('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', ['-f', appPath]);
   fs.utimesSync(appPath, new Date(), new Date());
   return appPath;
 }
