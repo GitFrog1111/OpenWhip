@@ -16,14 +16,14 @@
 // ══════════════════════════════════════════════════════════════════════════════
 const P = {
   // Rope structure
-  segments:       32,     // number of chain links
-  segmentLength:  22,     // base length of each link (px)
+  segments:       28,     // number of chain links
+  segmentLength:  25,     // base length of each link (px)
   taper:          0.6,   // tip segment is this fraction of base length
 
   // Physics
   gravity:        1.2,   // normal gravity
   dropGravity:    0.95,    // gravity when dropping/despawning
-  damping:        0.965, // velocity retention per frame (1 = no loss)
+  damping:        0.96,  // velocity retention per frame (1 = no loss)
   constraintIters:20,     // higher = stiffer chain
   maxStretchRatio: 1.2,  // hard cap for per-link stretch during fast whips
 
@@ -49,9 +49,10 @@ const P = {
   wallFriction:    0.86,   // tangential damping on wall hit
 
   // Crack detection
-  crackSpeed:     320,     // tip velocity (px/frame) to trigger crack
+  crackSpeed:     340,     // tip velocity (px/frame) to trigger crack
   crackLinks:     2,       // trailing links whose speed counts for a crack
-  substeps:       3,       // physics sub-steps per frame
+  substeps:       1,       // physics sub-steps per frame
+  solveMode:      'handleFirst', // 'handleFirst': parent link is authoritative, impulse travels to the tip; 'split': classic symmetric
   crackCooldownMs:450,   // min ms between cracks
   firstCrackGraceMs: 350, // no crack (macro) until this long after spawn
 
@@ -65,7 +66,7 @@ const P = {
 
   // Mass taper + air drag (heavier handle, light fast tip)
   tipMass:        0.35,   // tip mass relative to handle (constraints move light links more)
-  airDrag:        0.0003, // per-frame drag proportional to speed
+  airDrag:        0.0001, // per-frame drag proportional to speed
   maxAirDrag:     0.12,   // cap on drag fraction per frame
 
   // Crack FX
@@ -376,7 +377,7 @@ function integrate(hx, hy, N) {
       const target = segLen(i);
       const diff = (dist - target) / dist * 0.5;
       const ox = dx * diff, oy = dy * diff;
-      if (i === 0 && !dropping) {
+      if ((i === 0 && !dropping) || (P.solveMode === 'handleFirst' && !dropping)) {
         b.x -= ox * 2;
         b.y -= oy * 2;
       } else {
