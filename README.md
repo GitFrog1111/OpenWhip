@@ -21,9 +21,9 @@ sudo apt install xdotool
 
 - Click the Dock or tray icon, or press `Option+Shift+W` (`Alt+Shift+W`): spawn whip.
 - Right-click tray icon: quit.
-- Left click: crack the whip at him. It sends an interrupt (Ctrl-C) and one of the encouraging messages!
+- Flick, then click while the whip is snapping: that is a strike. It sends an interrupt (Ctrl-C) and one of the encouraging messages!
+- A click with a still whip does nothing. Fast flicks alone crack with sound and sparks but never type.
 - Right click: drop whip.
-- Fast flicks crack with sound and sparks too, but only a click types.
 - Smash the bottles on the shelves for points. Fast hits in a row multiply the score; your best is kept.
 
 ## macOS setup
