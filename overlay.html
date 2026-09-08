@@ -37,14 +37,14 @@ const P = {
   handleAimByMouseX: 0.25, // horizontal mouse movement influence on target angle
   handleAimByMouseY: 0.12, // vertical mouse movement influence on target angle
   handleAimClamp:    1.4,  // max radians target can deviate from base angle
-  handleSpring:      0.7,  // restoring force to target angle
-  handleAngularDamping: 0.078, // angular velocity damping
+  handleSpring:      0.35, // restoring force to target angle
+  handleAngularDamping: 0.5, // angular velocity retained per step (lower = slower turn)
   basePoseSegments: 2,    // how many early segments are strongly guided
   basePoseStiffStart: 0.9, // stiffness near handle
   basePoseStiffEnd:   0.8, // stiffness near end of guided region
 
   // Elastic bend limits by chain position (handle stiff, tip floppy)
-  handleMaxBendDeg: 14,   // max angle between links near handle
+  handleMaxBendDeg: 32,   // max angle between links near handle
   tipMaxBendDeg:   45,    // max angle between links near tip (low = no tangles)
   bendRigidityStart: 0.85, // correction strength near handle
   bendRigidityEnd:   0.65, // correction strength near tip
@@ -592,8 +592,8 @@ function drawTrail() {
     const a = trail[i - 1], b = trail[i];
     const t = i / trail.length;
     const k = Math.min(1, b.sp / (P.crackSpeed * speedScale()));
-    ctx.globalAlpha = 0.28 * t * k;
-    ctx.lineWidth = 2 + 5 * t * k;
+    ctx.globalAlpha = 0.16 * t * k;
+    ctx.lineWidth = 1.5 + 3 * t * k;
     ctx.beginPath();
     ctx.moveTo(a.x, a.y);
     ctx.lineTo(b.x, b.y);
