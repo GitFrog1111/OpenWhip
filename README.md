@@ -26,6 +26,12 @@ sudo apt install xdotool
 - Right click: drop whip.
 - Smash the bottles on the shelves for points. Fast hits in a row multiply the score; your best is kept.
 
+## Pat on the shoulder
+
+For the days he deserves it. Press `Option+Shift+P` (`Alt+Shift+P`) or pick it from the tray menu: a hand follows
+your mouse. Left click pats him, sends a kind word (no interrupt, just the message and Enter) and floats some hearts.
+Right click waves goodbye.
+
 ## macOS setup
 
 On first run `openwhip` builds `OpenWhip.app` inside the package (a renamed, re-signed copy of the bundled

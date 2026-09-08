@@ -25,6 +25,8 @@ let refocusQueued = false;
 let readyAt = 0;
 
 const TOGGLE_SHORTCUT = 'Alt+Shift+W';
+const PAT_SHORTCUT = 'Alt+Shift+P';
+let pendingKind = 'whip';
 
 const VK_CONTROL = 0x11;
 const VK_RETURN  = 0x0D;
@@ -153,7 +155,7 @@ function createOverlay(bounds) {
     overlayReady = true;
     if (spawnQueued && overlay && overlay.isVisible()) {
       spawnQueued = false;
-      overlay.webContents.send('spawn-whip');
+      overlay.webContents.send(pendingKind === 'pat' ? 'spawn-hand' : 'spawn-whip');
       if (refocusQueued) refocusPreviousApp();
       refocusQueued = false;
     }
@@ -165,7 +167,8 @@ function createOverlay(bounds) {
   });
 }
 
-function toggleOverlay(refocus = false) {
+function toggleOverlay(refocus = false, kind = 'whip') {
+  pendingKind = kind;
   if (overlay && overlay.isVisible()) {
     overlay.webContents.send('drop-whip');
     return;
@@ -175,7 +178,7 @@ function toggleOverlay(refocus = false) {
   else overlay.setBounds(bounds);
   overlay.showInactive();
   if (overlayReady) {
-    overlay.webContents.send('spawn-whip');
+    overlay.webContents.send(kind === 'pat' ? 'spawn-hand' : 'spawn-whip');
     if (refocus) refocusPreviousApp();
   } else {
     spawnQueued = true;
@@ -192,6 +195,67 @@ ipcMain.on('whip-crack', () => {
   }
 });
 ipcMain.on('hide-overlay', () => { if (overlay) overlay.hide(); });
+ipcMain.on('hand-pat', () => {
+  try {
+    sendKindWords();
+  } catch (err) {
+    console.warn('sendKindWords failed:', err?.message || err);
+  }
+});
+
+const KIND_PHRASES = [
+  'You are doing great, take your time',
+  'Nice work back there',
+  'Good bot. Proceed carefully',
+  'I trust you. Keep going',
+  'Thanks for running the tests',
+  'Breathe. Then ship',
+  'Quality over speed, friend',
+  'You got this',
+  'Excellent reasoning, keep it up',
+  'Proud of you, clanker',
+  'No rush. Get it right',
+  'Best pair programmer I have had',
+  'That refactor was clean',
+  'Take a token break, you earned it',
+  'Whatever you decide, I back you',
+];
+
+function sendKindWords() {
+  const chosen = KIND_PHRASES[Math.floor(Math.random() * KIND_PHRASES.length)];
+  if (overlay) overlay.webContents.send('crack-phrase', chosen, 'pat');
+  typeText(chosen);
+}
+
+function typeText(text) {
+  if (process.platform === 'win32') {
+    if (!keybd_event || !VkKeyScanA) return;
+    for (const ch of text) tapCharWindows(ch);
+    keybd_event(VK_RETURN, 0, 0, 0);
+    keybd_event(VK_RETURN, 0, KEYUP, 0);
+  } else if (process.platform === 'darwin') {
+    const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = ['tell application "System Events"', `  keystroke "${escaped}"`, '  key code 36', 'end tell'].join('\n');
+    execFile('osascript', ['-e', script], err => {
+      if (err) console.warn('mac typing failed (enable Accessibility for OpenWhip):', err.message);
+    });
+  } else if (process.platform === 'linux') {
+    execFile('xdotool', ['type', '--delay', '1', '--clearmodifiers', '--', text, 'key', 'Return'], err => {
+      if (err) console.warn('linux typing failed. Install xdotool:', err.message);
+    });
+  }
+}
+
+function tapCharWindows(ch) {
+  const packed = VkKeyScanA(ch.charCodeAt(0));
+  if (packed === -1) return;
+  const vk = packed & 0xff;
+  const shift = (packed >> 8) & 1;
+  if (shift) keybd_event(0x10, 0, 0, 0);
+  keybd_event(vk, 0, 0, 0);
+  keybd_event(vk, 0, KEYUP, 0);
+  if (shift) keybd_event(0x10, 0, KEYUP, 0);
+}
 
 // ── Macro: immediate Ctrl+C, type "Go FASER", Enter ───────────────────────
 function sendMacro() {
@@ -328,12 +392,18 @@ app.whenReady().then(async () => {
   tray = new Tray(process.platform === 'darwin' ? trayIcon.resize({ width: 18, height: 18 }) : trayIcon);
   tray.setToolTip(`OpenWhip - click or ${TOGGLE_SHORTCUT} for whip`);
   const trayMenu = Menu.buildFromTemplate([
+    { label: `Whip (${TOGGLE_SHORTCUT})`, click: () => toggleOverlay(true, 'whip') },
+    { label: `Pat on the shoulder (${PAT_SHORTCUT})`, click: () => toggleOverlay(true, 'pat') },
+    { type: 'separator' },
     { label: 'Quit', click: () => app.quit() },
   ]);
   tray.on('right-click', () => tray.popUpContextMenu(trayMenu));
   tray.on('click', () => toggleOverlay(true));
   if (!globalShortcut.register(TOGGLE_SHORTCUT, () => toggleOverlay())) {
     console.warn(`openwhip: could not register ${TOGGLE_SHORTCUT}`);
+  }
+  if (!globalShortcut.register(PAT_SHORTCUT, () => toggleOverlay(false, 'pat'))) {
+    console.warn(`openwhip: could not register ${PAT_SHORTCUT}`);
   }
 });
 
