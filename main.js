@@ -235,7 +235,7 @@ function typeText(text) {
     keybd_event(VK_RETURN, 0, KEYUP, 0);
   } else if (process.platform === 'darwin') {
     const escaped = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const script = ['tell application "System Events"', `  keystroke "${escaped}"`, '  key code 36', 'end tell'].join('\n');
+    const script = ['tell application "System Events"', `  keystroke "${escaped}"`, '  delay 0.25', '  key code 36', '  delay 0.15', 'end tell'].join('\n');
     execFile('osascript', ['-e', script], err => {
       if (err) console.warn('mac typing failed (enable Accessibility for OpenWhip):', err.message);
     });
@@ -342,7 +342,9 @@ function sendMacroMac(text) {
   const typeAndEnterScript = [
     'tell application "System Events"',
     `  keystroke "${escaped}"`,
+    '  delay 0.25',
     '  key code 36', // Enter
+    '  delay 0.15',
     'end tell'
   ].join('\n');
 
