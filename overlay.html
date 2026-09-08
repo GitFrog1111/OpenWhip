@@ -21,9 +21,12 @@ const P = {
   taper:          0.6,   // tip segment is this fraction of base length
 
   // Physics
-  gravity:        1.2,   // normal gravity
+  gravity:        1.5,   // normal gravity
   dropGravity:    0.95,    // gravity when dropping/despawning
-  damping:        0.96,  // velocity retention per frame (1 = no loss)
+  damping:        0.94,  // velocity retention per frame (1 = no loss)
+  restDamping:    0.80,  // damping while the hand is still, so the whip settles
+  restHandSpeed:  0.6,   // hand speed (px/frame) under which the whip is considered at rest
+  sleepSpeed:     0.03,  // velocities below this are zeroed
   constraintIters:20,     // higher = stiffer chain
   maxStretchRatio: 1.2,  // hard cap for per-link stretch during fast whips
 
@@ -52,7 +55,7 @@ const P = {
   crackSpeed:     340,     // tip velocity (px/frame) to trigger crack
   crackLinks:     2,       // trailing links whose speed counts for a crack
   substeps:       1,       // physics sub-steps per frame
-  solveMode:      'handleFirst', // 'handleFirst': parent link is authoritative, impulse travels to the tip; 'split': classic symmetric
+  solveMode:      'split', // 'split': symmetric, dissipative; 'handleFirst': parent link is authoritative (snappier, can jitter)
   crackCooldownMs:450,   // min ms between cracks
   firstCrackGraceMs: 350, // no crack (macro) until this long after spawn
 
@@ -342,7 +345,9 @@ function applyWallCollisions() {
 // ── Physics step ────────────────────────────────────────────────────────────
 function integrate(hx, hy, N) {
   const g = (dropping ? P.dropGravity : P.gravity) / (N * N);
-  const damp = Math.pow(P.damping, 1 / N);
+  const handSpeed = Math.hypot(mouseX - prevMouseX, mouseY - prevMouseY);
+  const baseDamp = !dropping && handSpeed < P.restHandSpeed ? P.restDamping : P.damping;
+  const damp = Math.pow(baseDamp, 1 / N);
   const start = dropping ? 0 : 1;
   for (let i = start; i < whip.length; i++) {
     const p = whip[i];
@@ -351,6 +356,8 @@ function integrate(hx, hy, N) {
     const drag = 1 - Math.min(P.maxAirDrag, P.airDrag * Math.hypot(vx, vy) * N) / N;
     vx *= drag;
     vy *= drag;
+    if (Math.abs(vx) < P.sleepSpeed) vx = 0;
+    if (Math.abs(vy) < P.sleepSpeed) vy = 0;
     p.px = p.x;
     p.py = p.y;
     p.x += vx;
