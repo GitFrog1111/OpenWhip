@@ -4,6 +4,10 @@
 
 Sometimes claude code is going too shlow, and you must whip him into shape..
 
+Or pat him on the shoulder. Your call.
+
+![OpenWhip demo: whip cracks, bottles shatter, FASTER gets typed, then a hand pats and types kind words](assets/demo.gif)
+
 ## Install + run
 
 ```bash
