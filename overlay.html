@@ -49,7 +49,9 @@ const P = {
   wallFriction:    0.86,   // tangential damping on wall hit
 
   // Crack detection
-  crackSpeed:     340,     // tip velocity threshold to trigger crack
+  crackSpeed:     280,     // tip velocity (px/frame) to trigger crack
+  crackLinks:     3,       // trailing links whose speed counts for a crack
+  substeps:       3,       // physics sub-steps per frame
   crackCooldownMs:200,   // min ms between cracks
   firstCrackGraceMs: 350, // no crack (macro) until this long after spawn
 
@@ -76,7 +78,7 @@ const P = {
   bottleCount:    5,      // bottles on screen while the whip is out
   bottleW:        34,
   bottleH:        96,
-  breakSpeed:     110,    // tip speed needed to shatter a bottle
+  breakSpeed:     130,    // tip speed needed to shatter a bottle
   bottleRespawnMs:1800,   // delay before a broken bottle is replaced
   tipHitLinks:    6,      // trailing links that can break bottles
   shardCount:     14,
@@ -323,19 +325,15 @@ function applyWallCollisions() {
 }
 
 // ── Physics step ────────────────────────────────────────────────────────────
-function update() {
-  if (!whip) return;
-
-  const g = dropping ? P.dropGravity : P.gravity;
-  updateHandleAim();
-
-  // Verlet integration
-  const start = dropping ? 0 : 1; // if dropping, handle is free too
+function integrate(hx, hy, N) {
+  const g = (dropping ? P.dropGravity : P.gravity) / (N * N);
+  const damp = Math.pow(P.damping, 1 / N);
+  const start = dropping ? 0 : 1;
   for (let i = start; i < whip.length; i++) {
     const p = whip[i];
-    let vx = (p.x - p.px) * P.damping;
-    let vy = (p.y - p.py) * P.damping;
-    const drag = 1 - Math.min(P.maxAirDrag, P.airDrag * Math.hypot(vx, vy));
+    let vx = (p.x - p.px) * damp;
+    let vy = (p.y - p.py) * damp;
+    const drag = 1 - Math.min(P.maxAirDrag, P.airDrag * Math.hypot(vx, vy) * N) / N;
     vx *= drag;
     vy *= drag;
     p.px = p.x;
@@ -344,23 +342,19 @@ function update() {
     p.y += vy + g;
   }
 
-  // Pin handle to mouse
   if (!dropping) {
-    whip[0].x = mouseX;
-    whip[0].y = mouseY;
-    whip[0].px = mouseX;
-    whip[0].py = mouseY;
+    whip[0].x = hx;
+    whip[0].y = hy;
+    whip[0].px = hx;
+    whip[0].py = hy;
   }
 
-  // Prevent rubber-band stretching spikes before constraints.
   capSegmentStretch();
   applyWallCollisions();
-
-  // Keep early whip segments posed upward from handle.
   applyBasePose();
 
-  // Distance constraints (multiple iterations for stiffness)
-  for (let iter = 0; iter < P.constraintIters; iter++) {
+  const iters = Math.max(1, Math.round(P.constraintIters / N));
+  for (let iter = 0; iter < iters; iter++) {
     for (let i = 0; i < whip.length - 1; i++) {
       const a = whip[i], b = whip[i + 1];
       const dx = b.x - a.x, dy = b.y - a.y;
@@ -369,7 +363,6 @@ function update() {
       const diff = (dist - target) / dist * 0.5;
       const ox = dx * diff, oy = dy * diff;
       if (i === 0 && !dropping) {
-        // Handle is pinned – push only the next point
         b.x -= ox * 2;
         b.y -= oy * 2;
       } else {
@@ -378,18 +371,39 @@ function update() {
         b.x -= ox * 2 * (1 - wa); b.y -= oy * 2 * (1 - wa);
       }
     }
-    // Clamp bend angle per joint; near handle = stiffer, near tip = floppier.
     applyBendLimits();
     if (!dropping) applyBasePose();
     capSegmentStretch();
     applyWallCollisions();
   }
+}
 
-  // Tip velocity for crack detection
+function tipSpeed(N) {
+  let best = 0;
+  for (let i = Math.max(1, whip.length - P.crackLinks); i < whip.length; i++) {
+    const p = whip[i];
+    best = Math.max(best, Math.hypot(p.x - p.px, p.y - p.py) * N);
+  }
+  return best;
+}
+
+function update() {
+  if (!whip) return;
+
+  const N = P.substeps;
+  updateHandleAim();
+  let peak = 0;
+  for (let k = 1; k <= N; k++) {
+    const t = k / N;
+    integrate(lerp(prevMouseX, mouseX, t), lerp(prevMouseY, mouseY, t), N);
+    if (!dropping) {
+      peak = Math.max(peak, tipSpeed(N));
+      checkBottleHits(N);
+    }
+  }
+
   const tip = whip[whip.length - 1];
-  const tipVel = Math.hypot(tip.x - tip.px, tip.y - tip.py);
-
-  if (!dropping && tipVel > P.crackSpeed * speedScale()) {
+  if (!dropping && peak > P.crackSpeed * speedScale()) {
     const now = Date.now();
     if (now - whipSpawnTime >= P.firstCrackGraceMs && now - lastCrackTime > P.crackCooldownMs) {
       lastCrackTime = now;
@@ -399,7 +413,6 @@ function update() {
     }
   }
 
-  // If dropping, check if everything fell off screen
   if (dropping && whip.every(p => p.y > H + 60)) {
     whip = null;
     dropping = false;
@@ -495,7 +508,7 @@ function crackFx(x, y, vx, vy) {
 function updateFx() {
   if (whip && !dropping) {
     const tip = whip[whip.length - 1];
-    trail.push({ x: tip.x, y: tip.y, sp: Math.hypot(tip.x - tip.px, tip.y - tip.py) });
+    trail.push({ x: tip.x, y: tip.y, sp: Math.hypot(tip.x - tip.px, tip.y - tip.py) * P.substeps });
     if (trail.length > P.trailLength) trail.shift();
   } else {
     trail = [];
@@ -697,6 +710,22 @@ function shatter(b, vx, vy) {
   playCrackSound();
 }
 
+function checkBottleHits(N) {
+  const from = Math.max(1, whip.length - P.tipHitLinks);
+  for (let i = from; i < whip.length; i++) {
+    const p = whip[i];
+    const vx = (p.x - p.px) * N, vy = (p.y - p.py) * N;
+    if (Math.hypot(vx, vy) < P.breakSpeed * speedScale()) continue;
+    for (let j = bottles.length - 1; j >= 0; j--) {
+      if (segmentHitsRect(p.px, p.py, p.x, p.y, bottles[j])) {
+        shatter(bottles[j], vx, vy);
+        bottles.splice(j, 1);
+        scheduleRespawn();
+      }
+    }
+  }
+}
+
 function updateBottles() {
   const now = Date.now();
   respawnTimers = respawnTimers.filter(t => {
@@ -705,22 +734,6 @@ function updateBottles() {
     if (b) bottles.push(b);
     return false;
   });
-
-  if (whip && !dropping) {
-    const from = Math.max(1, whip.length - P.tipHitLinks);
-    for (let i = from; i < whip.length; i++) {
-      const p = whip[i];
-      const vx = p.x - p.px, vy = p.y - p.py;
-      if (Math.hypot(vx, vy) < P.breakSpeed * speedScale()) continue;
-      for (let j = bottles.length - 1; j >= 0; j--) {
-        if (segmentHitsRect(p.px, p.py, p.x, p.y, bottles[j])) {
-          shatter(bottles[j], vx, vy);
-          bottles.splice(j, 1);
-          scheduleRespawn();
-        }
-      }
-    }
-  }
 
   for (const s of shards) {
     s.vy += 0.5;
