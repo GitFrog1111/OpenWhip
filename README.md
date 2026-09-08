@@ -19,10 +19,28 @@ sudo apt install xdotool
 
 ## Controls
 
-- Click tray icon: spawn whip.
+- Click tray icon or press `Option+Shift+W` (`Alt+Shift+W`): spawn whip.
+- Right-click tray icon: quit.
 - Click: drop whip.
 - Whip him 😩💢
+- Smash the bottles on the shelves for points. Fast hits in a row multiply the score; your best is kept.
 - It sends an interrupt (Ctrl-C) and one of 5 encouraging messages!
+
+## macOS setup
+
+On first run `openwhip` builds `OpenWhip.app` inside the package (a renamed, re-signed copy of the bundled
+Electron with the whip icon) and launches it through `open`, so macOS sees an app called OpenWhip rather
+than your terminal. Typing into the focused app needs Accessibility access for it: when macOS prompts,
+open System Settings > Privacy & Security > Accessibility and turn on **OpenWhip**. If it is not listed:
+
+```bash
+open -R "$(npm root -g)/openwhip/OpenWhip.app"
+```
+
+Drag it onto the list and turn it on.
+
+If `openwhip` prints `Could not load Electron` on Node 26, electron's postinstall failed to unzip its binary.
+Reinstall on Node 22 or 24 (`nvm use 24 && npm install -g openwhip`).
 
 ## Roadmap
 

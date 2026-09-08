@@ -18,11 +18,14 @@ try {
 
 const appPath = path.resolve(__dirname, '..');
 
-const child = spawn(electronBinary, [appPath], {
-  detached: true,
-  stdio: 'ignore',
-  windowsHide: true,
-});
+const spawnOpts = { detached: true, stdio: 'ignore', windowsHide: true };
+let child;
+if (process.platform === 'darwin') {
+  const { ensureMacApp } = require('../scripts/mac-app');
+  child = spawn('open', ['-n', ensureMacApp(electronBinary, appPath), '--args', appPath], spawnOpts);
+} else {
+  child = spawn(electronBinary, [appPath], spawnOpts);
+}
 
 child.on('error', (err) => {
   console.error('Failed to start openwhip:', err.message);

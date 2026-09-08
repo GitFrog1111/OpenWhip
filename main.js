@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen, globalShortcut, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -21,6 +21,9 @@ if (process.platform === 'win32') {
 let tray, overlay;
 let overlayReady = false;
 let spawnQueued = false;
+let refocusQueued = false;
+
+const TOGGLE_SHORTCUT = 'Alt+Shift+W';
 
 const VK_CONTROL = 0x11;
 const VK_RETURN  = 0x0D;
@@ -138,6 +141,7 @@ function createOverlay() {
     },
   });
   overlay.setAlwaysOnTop(true, 'screen-saver');
+  overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlayReady = false;
   overlay.loadFile('overlay.html');
   overlay.webContents.on('did-finish-load', () => {
@@ -145,7 +149,8 @@ function createOverlay() {
     if (spawnQueued && overlay && overlay.isVisible()) {
       spawnQueued = false;
       overlay.webContents.send('spawn-whip');
-      refocusPreviousApp();
+      if (refocusQueued) refocusPreviousApp();
+      refocusQueued = false;
     }
   });
   overlay.on('closed', () => {
@@ -155,18 +160,19 @@ function createOverlay() {
   });
 }
 
-function toggleOverlay() {
+function toggleOverlay(refocus = false) {
   if (overlay && overlay.isVisible()) {
     overlay.webContents.send('drop-whip');
     return;
   }
   if (!overlay) createOverlay();
-  overlay.show();
+  overlay.showInactive();
   if (overlayReady) {
     overlay.webContents.send('spawn-whip');
-    refocusPreviousApp();
+    if (refocus) refocusPreviousApp();
   } else {
     spawnQueued = true;
+    refocusQueued = refocus;
   }
 }
 
@@ -276,15 +282,28 @@ function sendMacroLinux(text) {
 }
 
 // ── App lifecycle ───────────────────────────────────────────────────────────
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => toggleOverlay());
+}
+
 app.whenReady().then(async () => {
-  tray = new Tray(await getTrayIcon());
-  tray.setToolTip('OpenWhip - click for whip');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Quit', click: () => app.quit() },
-    ])
-  );
-  tray.on('click', toggleOverlay);
+  if (process.platform === 'darwin') {
+    app.dock.hide();
+    systemPreferences.isTrustedAccessibilityClient(true);
+  }
+  const trayIcon = await getTrayIcon();
+  tray = new Tray(process.platform === 'darwin' ? trayIcon.resize({ width: 18, height: 18 }) : trayIcon);
+  tray.setToolTip(`OpenWhip - click or ${TOGGLE_SHORTCUT} for whip`);
+  const trayMenu = Menu.buildFromTemplate([
+    { label: 'Quit', click: () => app.quit() },
+  ]);
+  tray.on('right-click', () => tray.popUpContextMenu(trayMenu));
+  tray.on('click', () => toggleOverlay(true));
+  if (!globalShortcut.register(TOGGLE_SHORTCUT, () => toggleOverlay())) {
+    console.warn(`openwhip: could not register ${TOGGLE_SHORTCUT}`);
+  }
 });
 
 app.on('window-all-closed', e => e.preventDefault()); // keep alive in tray

@@ -61,6 +61,20 @@ const P = {
   handleThickSegments: 2, // how many links from the handle get handleExtraWidth
   bgAlpha:        0.011,  // barely-visible bg so window captures mouse events
 
+  // Mass taper + air drag (heavier handle, light fast tip)
+  tipMass:        0.35,   // tip mass relative to handle (constraints move light links more)
+  airDrag:        0.0003, // per-frame drag proportional to speed
+  maxAirDrag:     0.12,   // cap on drag fraction per frame
+
+  // Bottles
+  bottleCount:    5,      // bottles on screen while the whip is out
+  bottleW:        34,
+  bottleH:        96,
+  breakSpeed:     110,    // tip speed needed to shatter a bottle
+  bottleRespawnMs:1800,   // delay before a broken bottle is replaced
+  tipHitLinks:    6,      // trailing links that can break bottles
+  shardCount:     14,
+
   // Initial arc shape
   arcWidth:       260,    // how far right the arc extends from mouse
   arcHeight:      185,    // how high the arc goes above mouse
@@ -106,6 +120,10 @@ function spawnWhip(mx, my) {
     pts.push({ x, y, px: x, py: y });
   }
   return pts;
+}
+
+function segMass(i) {
+  return lerp(1, P.tipMass, i / (P.segments - 1));
 }
 
 function segLen(i) {
@@ -305,8 +323,11 @@ function update() {
   const start = dropping ? 0 : 1; // if dropping, handle is free too
   for (let i = start; i < whip.length; i++) {
     const p = whip[i];
-    const vx = (p.x - p.px) * P.damping;
-    const vy = (p.y - p.py) * P.damping;
+    let vx = (p.x - p.px) * P.damping;
+    let vy = (p.y - p.py) * P.damping;
+    const drag = 1 - Math.min(P.maxAirDrag, P.airDrag * Math.hypot(vx, vy));
+    vx *= drag;
+    vy *= drag;
     p.px = p.x;
     p.py = p.y;
     p.x += vx;
@@ -342,8 +363,9 @@ function update() {
         b.x -= ox * 2;
         b.y -= oy * 2;
       } else {
-        a.x += ox; a.y += oy;
-        b.x -= ox; b.y -= oy;
+        const wa = segMass(i + 1) / (segMass(i) + segMass(i + 1));
+        a.x += ox * 2 * wa; a.y += oy * 2 * wa;
+        b.x -= ox * 2 * (1 - wa); b.y -= oy * 2 * (1 - wa);
       }
     }
     // Clamp bend angle per joint; near handle = stiffer, near tip = floppier.
@@ -372,6 +394,7 @@ function update() {
     dropping = false;
     window.bridge.hideOverlay();
   }
+  updateBottles();
   prevMouseX = mouseX;
   prevMouseY = mouseY;
 }
@@ -384,6 +407,8 @@ function draw() {
   ctx.fillStyle = `rgba(0,0,0,${P.bgAlpha})`;
   ctx.fillRect(0, 0, W, H);
 
+  drawBottles();
+  drawHud();
   if (!whip) return;
 
   // White: thin halo on full spline, then extra thickness only over handle links.
@@ -427,6 +452,198 @@ function draw() {
   }
 }
 
+// ── Bottles & score ─────────────────────────────────────────────────────────
+const BOTTLE_TINTS = ['#3f8f4f', '#7a4a1f', '#2f6f9f', '#8f8f3f'];
+let bottles = [];
+let shards = [];
+let score = 0;
+let best = 0;
+let combo = 0;
+let lastBreakTime = 0;
+try { best = Number(localStorage.getItem('openwhip.best')) || 0; } catch {}
+
+function shelfSpots() {
+  const spots = [];
+  const rows = [H * 0.22, H * 0.5];
+  const cols = 6;
+  for (const y of rows) {
+    for (let c = 0; c < cols; c++) {
+      spots.push({ x: W * (0.12 + 0.76 * c / (cols - 1)), y });
+    }
+  }
+  return spots;
+}
+
+function placeBottle() {
+  const free = shelfSpots().filter(sp => !bottles.some(b => Math.abs(b.x - sp.x) < P.bottleW && Math.abs(b.y - sp.y) < P.bottleH));
+  if (!free.length) return null;
+  const sp = free[Math.floor(Math.random() * free.length)];
+  return { x: sp.x, y: sp.y, w: P.bottleW, h: P.bottleH, tint: BOTTLE_TINTS[Math.floor(Math.random() * BOTTLE_TINTS.length)], wobble: 0 };
+}
+
+function ensureBottles() {
+  while (bottles.length < P.bottleCount) {
+    const b = placeBottle();
+    if (!b) break;
+    bottles.push(b);
+  }
+}
+
+let respawnTimers = [];
+function scheduleRespawn() {
+  respawnTimers.push(Date.now() + P.bottleRespawnMs);
+}
+
+function segmentHitsRect(ax, ay, bx, by, r) {
+  const left = r.x - r.w / 2, right = r.x + r.w / 2, top = r.y - r.h, bottom = r.y;
+  const inside = (x, y) => x >= left && x <= right && y >= top && y <= bottom;
+  if (inside(ax, ay) || inside(bx, by)) return true;
+  const steps = 4;
+  for (let k = 1; k < steps; k++) {
+    const t = k / steps;
+    if (inside(lerp(ax, bx, t), lerp(ay, by, t))) return true;
+  }
+  return false;
+}
+
+function shatter(b, vx, vy) {
+  for (let k = 0; k < P.shardCount; k++) {
+    const ang = Math.random() * Math.PI * 2;
+    const sp = 2 + Math.random() * 6;
+    shards.push({
+      x: b.x + (Math.random() - 0.5) * b.w,
+      y: b.y - Math.random() * b.h,
+      vx: Math.cos(ang) * sp + vx * 0.15,
+      vy: Math.sin(ang) * sp + vy * 0.15 - 3,
+      rot: Math.random() * Math.PI,
+      vr: (Math.random() - 0.5) * 0.4,
+      size: 4 + Math.random() * 7,
+      tint: b.tint,
+      life: 1,
+    });
+  }
+  const now = Date.now();
+  combo = now - lastBreakTime < 900 ? combo + 1 : 1;
+  lastBreakTime = now;
+  score += 10 * combo;
+  if (score > best) {
+    best = score;
+    try { localStorage.setItem('openwhip.best', String(best)); } catch {}
+  }
+  playCrackSound();
+}
+
+function updateBottles() {
+  const now = Date.now();
+  respawnTimers = respawnTimers.filter(t => {
+    if (t > now) return true;
+    const b = placeBottle();
+    if (b) bottles.push(b);
+    return false;
+  });
+
+  if (whip && !dropping) {
+    const from = Math.max(1, whip.length - P.tipHitLinks);
+    for (let i = from; i < whip.length; i++) {
+      const p = whip[i];
+      const vx = p.x - p.px, vy = p.y - p.py;
+      if (Math.hypot(vx, vy) < P.breakSpeed) continue;
+      for (let j = bottles.length - 1; j >= 0; j--) {
+        if (segmentHitsRect(p.px, p.py, p.x, p.y, bottles[j])) {
+          shatter(bottles[j], vx, vy);
+          bottles.splice(j, 1);
+          scheduleRespawn();
+        }
+      }
+    }
+  }
+
+  for (const s of shards) {
+    s.vy += 0.5;
+    s.x += s.vx;
+    s.y += s.vy;
+    s.rot += s.vr;
+    s.life -= 0.018;
+  }
+  shards = shards.filter(s => s.life > 0 && s.y < H + 40);
+}
+
+function drawBottle(b) {
+  const left = b.x - b.w / 2, top = b.y - b.h;
+  const neckW = b.w * 0.42, neckH = b.h * 0.3;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(b.x - neckW / 2, top);
+  ctx.lineTo(b.x + neckW / 2, top);
+  ctx.lineTo(b.x + neckW / 2, top + neckH * 0.55);
+  ctx.quadraticCurveTo(left + b.w, top + neckH, left + b.w, top + neckH + 8);
+  ctx.lineTo(left + b.w, b.y - 6);
+  ctx.quadraticCurveTo(left + b.w, b.y, left + b.w - 6, b.y);
+  ctx.lineTo(left + 6, b.y);
+  ctx.quadraticCurveTo(left, b.y, left, b.y - 6);
+  ctx.lineTo(left, top + neckH + 8);
+  ctx.quadraticCurveTo(left, top + neckH, b.x - neckW / 2, top + neckH * 0.55);
+  ctx.closePath();
+  ctx.fillStyle = b.tint;
+  ctx.globalAlpha = 0.85;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#fff';
+  ctx.stroke();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#111';
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.fillRect(left + 5, top + neckH + 14, 5, b.h - neckH - 30);
+  ctx.fillStyle = '#e8e2c8';
+  ctx.fillRect(b.x - neckW / 2 - 2, top - 6, neckW + 4, 8);
+  ctx.restore();
+}
+
+function drawBottles() {
+  for (const b of bottles) drawBottle(b);
+  for (const s of shards) {
+    ctx.save();
+    ctx.translate(s.x, s.y);
+    ctx.rotate(s.rot);
+    ctx.globalAlpha = Math.max(0, s.life);
+    ctx.fillStyle = s.tint;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-s.size / 2, s.size / 2);
+    ctx.lineTo(s.size / 2, s.size / 2);
+    ctx.lineTo(0, -s.size / 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawHud() {
+  if (!whip && !shards.length) return;
+  const text = `Score ${score}`;
+  const sub = `Best ${best}${combo > 1 && Date.now() - lastBreakTime < 900 ? `   x${combo}` : ''}`;
+  ctx.save();
+  ctx.font = 'bold 28px -apple-system, Segoe UI, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = '#fff';
+  ctx.fillStyle = '#111';
+  ctx.strokeText(text, W - 28, 24);
+  ctx.fillText(text, W - 28, 24);
+  ctx.font = 'bold 16px -apple-system, Segoe UI, sans-serif';
+  ctx.lineWidth = 4;
+  ctx.strokeText(sub, W - 28, 60);
+  ctx.fillText(sub, W - 28, 60);
+  ctx.restore();
+}
+
 // ── Main loop ───────────────────────────────────────────────────────────────
 function loop() {
   update();
@@ -437,6 +654,7 @@ loop();
 
 // ── IPC from main process ───────────────────────────────────────────────────
 window.bridge.onSpawnWhip(() => {
+  ensureBottles();
   whip = spawnWhip(mouseX || W / 2, mouseY || H / 2);
   dropping = false;
   prevMouseX = mouseX;
