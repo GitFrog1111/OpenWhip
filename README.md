@@ -19,7 +19,7 @@ sudo apt install xdotool
 
 ## Controls
 
-- Click tray icon or press `Option+Shift+W` (`Alt+Shift+W`): spawn whip.
+- Hover or click the tray icon, or press `Option+Shift+W` (`Alt+Shift+W`): spawn whip.
 - Right-click tray icon: quit.
 - Click: drop whip.
 - Whip him 😩💢

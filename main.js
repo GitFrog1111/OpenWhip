@@ -301,6 +301,7 @@ app.whenReady().then(async () => {
   ]);
   tray.on('right-click', () => tray.popUpContextMenu(trayMenu));
   tray.on('click', () => toggleOverlay(true));
+  tray.on('mouse-enter', () => { if (!overlay || !overlay.isVisible()) toggleOverlay(true); });
   if (!globalShortcut.register(TOGGLE_SHORTCUT, () => toggleOverlay())) {
     console.warn(`openwhip: could not register ${TOGGLE_SHORTCUT}`);
   }
