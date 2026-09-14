@@ -85,12 +85,33 @@ let whipSpawnTime = 0;
 let handleAngle = P.baseTargetAngle;
 let handleAngVel = 0;
 
+// ── Multi-screen ────────────────────────────────────────────────────────────
+// Physics runs in window-local pixels. `origin` is this window's top-left in
+// global screen coords, so any rope can be swapped between overlays.
+let origin = { x: 0, y: 0 };
+let world = null;           // whole virtual desktop, global coords
+let multiDisplay = false;
+let ghost = null;           // rope owned by another screen, already local
+
+/** Collision box in local coords: the whole desktop, not just this screen. */
+function wallRect() {
+  if (!world) return { minX: 0, minY: 0, maxX: W, maxY: H };
+  return {
+    minX: world.x - origin.x,
+    minY: world.y - origin.y,
+    maxX: world.x + world.width - origin.x,
+    maxY: world.y + world.height - origin.y,
+  };
+}
+
+const toGlobal = p => ({ x: p.x + origin.x, y: p.y + origin.y });
+const toLocal = p => ({ x: p.x - origin.x, y: p.y - origin.y });
+
 const WHIP_CRACK_SOUNDS = ['sounds/A.mp3', 'sounds/B.mp3', 'sounds/C.mp3', 'sounds/D.mp3', 'sounds/E.mp3'];
 
 document.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
-document.addEventListener('mousedown', () => {
-  if (whip && !dropping) dropping = true;
-});
+// Routed through main so a click on any screen drops the whip, wherever it is.
+document.addEventListener('mousedown', () => { window.bridge.dropWhip(); });
 
 // ── Whip creation ───────────────────────────────────────────────────────────
 function spawnWhip(mx, my) {
@@ -254,7 +275,7 @@ function capSegmentStretch() {
   }
 }
 
-function applyWallCollisions() {
+function applyWallCollisions(wall) {
   if (!whip || dropping) return; // disable collisions while dropping
   const start = 1; // keep pinned handle untouched
   for (let i = start; i < whip.length; i++) {
@@ -263,25 +284,25 @@ function applyWallCollisions() {
     let vy = p.y - p.py;
     let hit = false;
 
-    if (p.x < 0) {
-      p.x = 0;
+    if (p.x < wall.minX) {
+      p.x = wall.minX;
       if (vx < 0) vx = -vx * P.wallBounce;
       vy *= P.wallFriction;
       hit = true;
-    } else if (p.x > W) {
-      p.x = W;
+    } else if (p.x > wall.maxX) {
+      p.x = wall.maxX;
       if (vx > 0) vx = -vx * P.wallBounce;
       vy *= P.wallFriction;
       hit = true;
     }
 
-    if (p.y < 0) {
-      p.y = 0;
+    if (p.y < wall.minY) {
+      p.y = wall.minY;
       if (vy < 0) vy = -vy * P.wallBounce;
       vx *= P.wallFriction;
       hit = true;
-    } else if (p.y > H) {
-      p.y = H;
+    } else if (p.y > wall.maxY) {
+      p.y = wall.maxY;
       if (vy > 0) vy = -vy * P.wallBounce;
       vx *= P.wallFriction;
       hit = true;
@@ -299,6 +320,7 @@ function update() {
   if (!whip) return;
 
   const g = dropping ? P.dropGravity : P.gravity;
+  const wall = wallRect();
   updateHandleAim();
 
   // Verlet integration
@@ -323,7 +345,7 @@ function update() {
 
   // Prevent rubber-band stretching spikes before constraints.
   capSegmentStretch();
-  applyWallCollisions();
+  applyWallCollisions(wall);
 
   // Keep early whip segments posed upward from handle.
   applyBasePose();
@@ -350,7 +372,7 @@ function update() {
     applyBendLimits();
     if (!dropping) applyBasePose();
     capSegmentStretch();
-    applyWallCollisions();
+    applyWallCollisions(wall);
   }
 
   // Tip velocity for crack detection
@@ -366,17 +388,60 @@ function update() {
     }
   }
 
-  // If dropping, check if everything fell off screen
-  if (dropping && whip.every(p => p.y > H + 60)) {
+  // If dropping, check if everything fell off the bottom of the desktop
+  if (dropping && whip.every(p => p.y > wall.maxY + 60)) {
     whip = null;
     dropping = false;
-    window.bridge.hideOverlay();
+    window.bridge.whipGone();
   }
   prevMouseX = mouseX;
   prevMouseY = mouseY;
 }
 
 // ── Rendering ───────────────────────────────────────────────────────────────
+/** Draws a rope given in this window's local coords. */
+function drawRope(pts) {
+  if (pts.length < 2) return;
+
+  // White: thin halo on full spline, then extra thickness only over handle links.
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(pts, i);
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
+  }
+  ctx.lineWidth = P.lineWidthTip + P.outlineWidth * 2;
+  ctx.stroke();
+
+  const thickLinks = Math.min(P.handleThickSegments, pts.length - 1);
+  if (thickLinks > 0 && P.handleExtraWidth > 0) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 0; i < thickLinks; i++) {
+      const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(pts, i);
+      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
+    }
+    ctx.lineWidth =
+      P.lineWidthHandle + P.handleExtraWidth + P.outlineWidth * 2;
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = '#111';
+  for (let i = 0; i < pts.length - 1; i++) {
+    const t = i / Math.max(1, pts.length - 2);
+    const extra = i < P.handleThickSegments ? P.handleExtraWidth : 0;
+    ctx.lineWidth = lerp(P.lineWidthHandle, P.lineWidthTip, t) + extra;
+    const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(pts, i);
+    ctx.beginPath();
+    ctx.moveTo(pts[i].x, pts[i].y);
+    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
+    ctx.stroke();
+  }
+}
+
 function draw() {
   ctx.clearRect(0, 0, W, H);
 
@@ -384,60 +449,38 @@ function draw() {
   ctx.fillStyle = `rgba(0,0,0,${P.bgAlpha})`;
   ctx.fillRect(0, 0, W, H);
 
-  if (!whip) return;
-
-  // White: thin halo on full spline, then extra thickness only over handle links.
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.strokeStyle = '#fff';
-  if (whip.length >= 2) {
-    ctx.beginPath();
-    ctx.moveTo(whip[0].x, whip[0].y);
-    for (let i = 0; i < whip.length - 1; i++) {
-      const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
-      ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
-    }
-    ctx.lineWidth = P.lineWidthTip + P.outlineWidth * 2;
-    ctx.stroke();
-
-    const thickLinks = Math.min(P.handleThickSegments, whip.length - 1);
-    if (thickLinks > 0 && P.handleExtraWidth > 0) {
-      ctx.beginPath();
-      ctx.moveTo(whip[0].x, whip[0].y);
-      for (let i = 0; i < thickLinks; i++) {
-        const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
-        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
-      }
-      ctx.lineWidth =
-        P.lineWidthHandle + P.handleExtraWidth + P.outlineWidth * 2;
-      ctx.stroke();
-    }
-  }
-
-  ctx.strokeStyle = '#111';
-  for (let i = 0; i < whip.length - 1; i++) {
-    const t = i / Math.max(1, whip.length - 2);
-    const extra = i < P.handleThickSegments ? P.handleExtraWidth : 0;
-    ctx.lineWidth = lerp(P.lineWidthHandle, P.lineWidthTip, t) + extra;
-    const { cp1x, cp1y, cp2x, cp2y, x2, y2 } = whipSegmentBezier(whip, i);
-    ctx.beginPath();
-    ctx.moveTo(whip[i].x, whip[i].y);
-    ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, x2, y2);
-    ctx.stroke();
-  }
+  // Own whip wins; otherwise show the part of another screen's whip that
+  // reaches over here. Off-window points are simply clipped by the canvas.
+  if (whip) drawRope(whip);
+  else if (ghost) drawRope(ghost);
 }
 
 // ── Main loop ───────────────────────────────────────────────────────────────
 function loop() {
   update();
   draw();
+  if (whip && multiDisplay) window.bridge.sendGhost(whip.map(toGlobal));
   requestAnimationFrame(loop);
 }
 loop();
 
 // ── IPC from main process ───────────────────────────────────────────────────
-window.bridge.onSpawnWhip(() => {
+window.bridge.onInit(cfg => {
+  origin = cfg.origin || { x: 0, y: 0 };
+  world = cfg.world || null;
+  multiDisplay = !!cfg.multiDisplay;
+});
+
+// `point` is the global cursor position, so the whip lands under the cursor
+// even before this window has seen a single mousemove.
+window.bridge.onSpawnWhip(point => {
+  if (point) {
+    const p = toLocal(point);
+    mouseX = p.x;
+    mouseY = p.y;
+  }
   whip = spawnWhip(mouseX || W / 2, mouseY || H / 2);
+  ghost = null;
   dropping = false;
   prevMouseX = mouseX;
   prevMouseY = mouseY;
@@ -447,6 +490,59 @@ window.bridge.onSpawnWhip(() => {
 
 window.bridge.onDropWhip(() => {
   if (whip && !dropping) dropping = true;
+});
+
+// ── Handoff between screens ─────────────────────────────────────────────────
+// The cursor left this display: ship the rope out in global coords.
+window.bridge.onExportWhip(() => {
+  if (!whip || dropping) {
+    window.bridge.sendState(null);
+    return;
+  }
+  const state = {
+    pts: whip.map(p => ({
+      x: p.x + origin.x,
+      y: p.y + origin.y,
+      px: p.px + origin.x,
+      py: p.py + origin.y,
+    })),
+    handleAngle,
+    handleAngVel,
+    spawnTime: whipSpawnTime,
+    lastCrackTime,
+  };
+  whip = null;
+  ghost = null; // avoid flashing a stale ghost before the new owner broadcasts
+  dropping = false;
+  window.bridge.sendState(state);
+});
+
+// The cursor arrived here: pick the rope up mid-swing, momentum intact.
+window.bridge.onImportWhip(state => {
+  if (!state) return;
+  whip = state.pts.map(p => ({
+    x: p.x - origin.x,
+    y: p.y - origin.y,
+    px: p.px - origin.x,
+    py: p.py - origin.y,
+  }));
+  ghost = null;
+  dropping = false;
+  handleAngle = state.handleAngle;
+  handleAngVel = state.handleAngVel;
+  whipSpawnTime = state.spawnTime;
+  lastCrackTime = state.lastCrackTime || 0;
+  if (state.cursor) {
+    const c = toLocal(state.cursor);
+    mouseX = c.x;
+    mouseY = c.y;
+  }
+  prevMouseX = mouseX;
+  prevMouseY = mouseY;
+});
+
+window.bridge.onGhost(pts => {
+  ghost = pts && pts.length ? pts.map(toLocal) : null;
 });
 
 </script>
