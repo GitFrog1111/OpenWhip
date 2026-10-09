@@ -18,7 +18,17 @@ try {
 
 const appPath = path.resolve(__dirname, '..');
 
-const child = spawn(electronBinary, [appPath], {
+// On macOS, launch through Launch Services so Electron is its own "responsible" process.
+// Spawned directly, TCC checks Accessibility against the parent terminal instead of
+// Electron, and every keystroke fails with "osascript is not allowed to send keystrokes".
+const macBundle = process.platform === 'darwin'
+  ? electronBinary.replace(/\/Contents\/MacOS\/[^/]+$/, '')
+  : null;
+const [cmd, args] = macBundle && macBundle.endsWith('.app')
+  ? ['open', ['-n', '-a', macBundle, '--args', appPath]]
+  : [electronBinary, [appPath]];
+
+const child = spawn(cmd, args, {
   detached: true,
   stdio: 'ignore',
   windowsHide: true,

@@ -66,9 +66,25 @@ function refocusPreviousApp() {
 function createTrayIconFallback() {
   const p = path.join(__dirname, 'icon', 'Template.png');
   if (fs.existsSync(p)) {
-    const img = nativeImage.createFromPath(p);
+    let img = nativeImage.createFromPath(p);
     if (!img.isEmpty()) {
-      if (process.platform === 'darwin') img.setTemplateImage(true);
+      if (process.platform === 'darwin') {
+        // Template.png has an opaque white background, which macOS draws as a solid square.
+        // Turn darkness into alpha so only the whip strokes remain.
+        const { width, height } = img.getSize();
+        const bmp = img.toBitmap();
+        for (let i = 0; i < bmp.length; i += 4) {
+          const lum = (bmp[i] + bmp[i + 1] + bmp[i + 2]) / 3;
+          // Cut off near-white so the source's faint rounded-square edge disappears.
+          const ink = Math.max(0, 192 - lum) / 192;
+          bmp[i + 3] = Math.round(ink * bmp[i + 3]);
+          bmp[i] = bmp[i + 1] = bmp[i + 2] = 0;
+        }
+        img = nativeImage.createFromBitmap(bmp, { width, height });
+        // 512px source is far taller than the menu bar; macOS clips or hides oversized items.
+        img = img.resize({ width: 18, height: 18, quality: 'best' });
+        img.setTemplateImage(true);
+      }
       return img;
     }
   }
@@ -96,6 +112,9 @@ async function getTrayIcon() {
     return createTrayIconFallback();
   }
   if (process.platform === 'darwin') {
+    // The monochrome template fits the menu bar; the .icns path below yields a 64px thumbnail.
+    const template = createTrayIconFallback();
+    if (!template.isEmpty()) return template;
     const file = path.join(iconDir, 'AppIcon.icns');
     if (fs.existsSync(file)) {
       const fromPath = nativeImage.createFromPath(file);
@@ -279,11 +298,15 @@ function sendMacroLinux(text) {
 app.whenReady().then(async () => {
   tray = new Tray(await getTrayIcon());
   tray.setToolTip('OpenWhip - click for whip');
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: 'Quit', click: () => app.quit() },
-    ])
-  );
+  const menu = Menu.buildFromTemplate([
+    { label: 'Quit', click: () => app.quit() },
+  ]);
+  if (process.platform === 'darwin') {
+    // On macOS an attached context menu swallows left-clicks, so 'click' never fires.
+    tray.on('right-click', () => tray.popUpContextMenu(menu));
+  } else {
+    tray.setContextMenu(menu);
+  }
   tray.on('click', toggleOverlay);
 });
 
