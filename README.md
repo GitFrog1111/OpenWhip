@@ -17,6 +17,8 @@ windows and mac supported out of the box, but Linux is a special snowflake so yo
 sudo apt install xdotool
 ```
 
+On WSL2, just run `openwhip` from your distro, no xdotool needed. It installs the Windows build of Electron into `%LOCALAPPDATA%\openwhip` on first run (~100MB, one-time) and runs there, so the whip shows up in the Windows tray and can whip Claude in Windows Terminal.
+
 ## Controls
 
 - Click tray icon: spawn whip.

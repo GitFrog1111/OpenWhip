@@ -38,6 +38,7 @@
     "icon",
     "bin/openwhip.js",
     "bin/badclaude.js",
+    "bin/wsl.js",
     "README.md"
   ],
   "scripts": {

@@ -8,6 +8,15 @@ if (invokedAs === 'badclaude' || invokedAs === 'badclaude.cmd') {
   console.warn('Please run: npm install -g openwhip');
 }
 
+const appPath = path.resolve(__dirname, '..');
+
+// WSL2: run the Windows build of Electron instead (see wsl.js)
+const wsl = require('./wsl');
+if (wsl.isWSL()) {
+  wsl.launch(appPath);
+  return;
+}
+
 let electronBinary;
 try {
   electronBinary = require('electron');
@@ -15,8 +24,6 @@ try {
   console.error('Could not load Electron. Try: npm install -g openwhip');
   process.exit(1);
 }
-
-const appPath = path.resolve(__dirname, '..');
 
 const child = spawn(electronBinary, [appPath], {
   detached: true,
